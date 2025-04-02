@@ -1,0 +1,53 @@
+# Source control
+.git/
+.gitignore
+.github/
+
+# Tests
+test/
+coverage/
+.nyc_output/
+*.test.js
+*.spec.js
+
+# Development configs
+.eslintrc*
+.prettierrc*
+.editorconfig
+.vscode/
+.idea/
+*.config.js
+tsconfig.json
+
+# Documentation
+docs/
+*.md
+!README.md
+!LICENSE.md
+
+# Build tools
+.travis.yml
+.gitlab-ci.yml
+.circleci/
+.jenkins/
+
+# Development files
+examples/
+scripts/
+.env*
+*.log
+.DS_Store
+
+# Debug
+.debug/
+debug.log
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+bun.lockb
+
+# Project specific
+.hypercore-storage/
+.indexeddb/ 
