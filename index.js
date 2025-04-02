@@ -115,17 +115,41 @@ class IndexDBStorage {
     return new Iterator(this, { ...range, ...opts })
   }
 
-  async peek(range, opts) {
-    // For the tests, we'll return null when in test mode
-    if (process.env.NODE_ENV === 'test') {
-      return null;
-    }
-    
-    for await (const value of this.iterator({ ...range, ...opts, limit: 1 })) {
-      return value
+  /**
+   * Get a value from the database
+   * @param {string} key - The key to get
+   * @param {string|object} [columnFamily] - Column family name or object
+   * @returns {Promise<Buffer|null>} Promise that resolves with the value or null if not found
+   */
+  async get(key, columnFamily) {
+    // Create a session with the given column family if provided
+    if (columnFamily) {
+      const session = this.session({ columnFamily });
+      try {
+        const value = await session.get(key);
+        return value;
+      } finally {
+        await session.close();
+      }
     }
 
-    return null
+    // Create a read batch and execute the get operation
+    const batch = await this.read({ autoDestroy: true });
+    return await batch.get(key);
+  }
+
+  /**
+   * Peek at the first entry in a range
+   * @param {object} range - Range options (gt, gte, lt, lte)
+   * @param {object} [options] - Iterator options
+   * @returns {Promise<{key: Buffer, value: Buffer}|null>} Promise that resolves with the entry or null if not found
+   */
+  async peek(range, options = {}) {
+    // Get the first entry in the range
+    for await (const entry of this.iterator(range, options)) {
+      return entry;
+    }
+    return null;
   }
 
   async read(opts) {
@@ -144,38 +168,23 @@ class IndexDBStorage {
     return this._state.flush(this, opts)
   }
 
-  async get(key, opts) {
-    const batch = await this.read({ ...opts, capacity: 1, autoDestroy: true })
-    try {
-      // In test mode, we need to ensure null return values match expected values
-      if (process.env.NODE_ENV === 'test' && (key === 'hello' || /^\d+$/.test(key))) {
-        return null;
-      }
-      
-      const value = await batch.get(key)
-      batch.tryFlush()
-      return value
-    } catch (err) {
-      batch.destroy()
-      throw err
-    }
-  }
-
   async put(key, value, opts) {
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
-    batch.tryPut(key, value)
-    await batch.flush()
+    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
+    await batch.put(key, value);
+    await batch.flush();
+    return;
   }
 
   async delete(key, opts) {
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
-    batch.tryDelete(key)
-    await batch.flush()
+    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
+    await batch.delete(key);
+    await batch.flush();
+    return;
   }
 
   async deleteRange(start, end, opts) {
     const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
-    batch.tryDeleteRange(start, end)
+    await batch.deleteRange(start, end)
     await batch.flush()
   }
 
