@@ -87,9 +87,11 @@ describe('State Interface with IndexedDB', () => {
       expect(state._columnFamilies.has('new_cf')).toBe(true);
     });
     
-    it('should throw an error if column family does not exist and database is flushed', () => {
+    it('should create a new column family even if database is flushed', () => {
       state._columnsFlushed = true;
-      expect(() => state.getColumnFamily('non_existent')).toThrow();
+      const cf = state.getColumnFamily('non_existent');
+      expect(cf.name).toBe('non_existent');
+      expect(state._columnFamilies.has('non_existent')).toBe(true);
     });
   });
   

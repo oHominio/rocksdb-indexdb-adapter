@@ -184,8 +184,8 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
       const batch = await snapshot.read();
       const val = await batch.get('hello');
       batch.destroy();
-      // NOTE: In fake-indexeddb, snapshots actually see the latest data
-      // This is different from RocksDB, but acceptable for the adapter
+      // NOTE: In IndexedDB adapter, snapshots see the latest data
+      // This is different from RocksDB but acceptable for our adapter
       expect(val).toEqual(bufferFrom('earth'));
     }
 
