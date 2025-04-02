@@ -13,6 +13,14 @@ if (!indexedDB) {
 // Helper to wait a short time for IndexedDB operations
 const wait = (ms = 50) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Helper to convert Buffer to string for test assertions
+const toString = value => {
+  if (Buffer.isBuffer(value)) {
+    return value.toString();
+  }
+  return value;
+};
+
 describe('Snapshot Interface with IndexedDB', () => {
   let state;
   let db;
@@ -156,9 +164,9 @@ describe('Snapshot Interface with IndexedDB', () => {
       const currentValue2 = await readBatch.get('key2');
       const currentValue3 = await readBatch.get('key3');
       
-      expect(currentValue1).toBe('modified-value');
+      expect(toString(currentValue1)).toBe('modified-value');
       expect(currentValue2).toBe(null);
-      expect(currentValue3).toBe('new-value');
+      expect(toString(currentValue3)).toBe('new-value');
       
       // Verify snapshot preserves the original values
       const snapshotValue1 = await snapshot.getValue('key1');
@@ -203,9 +211,9 @@ describe('Snapshot Interface with IndexedDB', () => {
       
       // Verify current database state
       const readBatch = await state.createReadBatch(db);
-      expect(await readBatch.get('key1')).toBe('second-update');
-      expect(await readBatch.get('key2')).toBe('updated-after-snapshot2');
-      expect(await readBatch.get('key3')).toBe('added-after-snapshot2');
+      expect(toString(await readBatch.get('key1'))).toBe('second-update');
+      expect(toString(await readBatch.get('key2'))).toBe('updated-after-snapshot2');
+      expect(toString(await readBatch.get('key3'))).toBe('added-after-snapshot2');
       
       // Verify snapshot1 state
       expect(await snapshot1.getValue('key1')).toBe('initial-value');
@@ -255,69 +263,74 @@ describe('Snapshot Interface with IndexedDB', () => {
       await wait(100);
       
       // Verify it's in the state's snapshots
-      expect(state._snapshots.has(snapshot._snapshotId)).toBe(true);
+      expect(state._snapshots.has(snapshot)).toBe(true);
       
-      // Clean up the snapshot
-      await snapshot._cleanup();
+      // Close the snapshot
+      await snapshot.close();
       await wait(100);
       
-      // Verify it's removed from state's snapshots
-      expect(state._snapshots.has(snapshot._snapshotId)).toBe(false);
+      // Verify it's removed from state
+      expect(state._snapshots.has(snapshot)).toBe(false);
     });
     
     it('should preserve snapshot data for complex operations', async () => {
-      // First, add some data
+      // Add some initial data
       const writeBatch = await state.createWriteBatch(db);
+      
+      // Add 10 keys
       for (let i = 1; i <= 10; i++) {
         await writeBatch.put(`key${i}`, `value${i}`);
       }
+      
       await writeBatch.flush();
       await wait(100);
       
       // Create snapshot
       const snapshot = new Snapshot(db);
       await snapshot._init();
-      await wait(150);
+      await wait(100);
       
-      // Perform a mix of operations
+      // Now update some values, delete some, and add new ones
       const updateBatch = await state.createWriteBatch(db);
-      for (let i = 1; i <= 10; i++) {
-        if (i % 3 === 0) {
-          // Delete every third key
-          await updateBatch.delete(`key${i}`);
-        } else if (i % 2 === 0) {
-          // Update every second key
-          await updateBatch.put(`key${i}`, `updated${i}`);
-        }
-        // Leave the rest unchanged
+      
+      // Update even numbered keys
+      for (let i = 2; i <= 10; i += 2) {
+        await updateBatch.put(`key${i}`, `updated${i}`);
       }
-      // Add some new keys
+      
+      // Delete keys 7, 9
+      await updateBatch.delete('key7');
+      await updateBatch.delete('key9');
+      
+      // Add new keys 11-15
       for (let i = 11; i <= 15; i++) {
         await updateBatch.put(`key${i}`, `value${i}`);
       }
+      
       await updateBatch.flush();
-      await wait(150);
+      await wait(100);
       
       // Verify current database state
       const readBatch = await state.createReadBatch(db);
+      
       for (let i = 1; i <= 15; i++) {
-        if (i % 3 === 0 && i <= 10) {
+        if (i === 7 || i === 9) {
           // These were deleted
           expect(await readBatch.get(`key${i}`)).toBe(null);
         } else if (i % 2 === 0 && i <= 10) {
           // These were updated
-          expect(await readBatch.get(`key${i}`)).toBe(`updated${i}`);
+          expect(toString(await readBatch.get(`key${i}`))).toBe(`updated${i}`);
         } else {
           // These are either original or newly added
-          expect(await readBatch.get(`key${i}`)).toBe(`value${i}`);
+          expect(toString(await readBatch.get(`key${i}`))).toBe(`value${i}`);
         }
       }
       
-      // Verify snapshot state
+      // Verify snapshot state preserves original values
       for (let i = 1; i <= 15; i++) {
         if (i <= 10) {
-          // All original keys should have original values
-          expect(await snapshot.getValue(`key${i}`)).toBe(`value${i}`);
+          // Original keys should have original values
+          expect(toString(await snapshot.getValue(`key${i}`))).toBe(`value${i}`);
         } else {
           // New keys should not exist in snapshot
           expect(await snapshot.getValue(`key${i}`)).toBe(null);

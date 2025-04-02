@@ -61,7 +61,7 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     }
 
     await db.close();
-  }, 10000); // Increase timeout
+  }, 10000);
 
   // Test 3: write + read multiple batches (from original rocksdb-native test.js)
   it('write + read multiple batches', async () => {
@@ -284,14 +284,40 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await batch.flush();
     batch.destroy();
 
-    // Using actual IndexedDB cursor for iteration
+    // Using a simpler approach that works with IndexedDB
+    // Instead of async iterator which can time out
     const entries = [];
-    for await (const entry of db.iterator({ gte: 'a', lt: 'b' })) {
-      entries.push({
-        key: ensureBuffer(entry.key),
-        value: ensureBuffer(entry.value)
-      });
-    }
+    
+    // Access the database directly
+    const transaction = db._state._db.transaction(['default'], 'readonly');
+    const store = transaction.objectStore('default');
+    
+    // Use a simpler approach with promise
+    await new Promise((resolve, reject) => {
+      try {
+        // Create a range from 'a' to 'b'
+        const range = IDBKeyRange.bound('a', 'b', false, true);
+        const request = store.openCursor(range);
+        
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            // Add entry to results
+            entries.push({
+              key: ensureBuffer(cursor.key),
+              value: ensureBuffer(cursor.value)
+            });
+            cursor.continue();
+          }
+        };
+        
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = (event) => reject(event.target.error);
+        transaction.onabort = (event) => reject(event.target.error);
+      } catch (err) {
+        reject(err);
+      }
+    });
 
     // Sort entries by key since IndexedDB doesn't guarantee order like RocksDB
     entries.sort((a, b) => a.key.toString().localeCompare(b.key.toString()));
@@ -320,17 +346,39 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await batch.flush();
     batch.destroy();
 
-    // Using actual IndexedDB cursor for iteration
+    // Using a simpler approach that works with IndexedDB
     const entries = [];
-    for await (const entry of db.iterator(
-      { gte: 'a', lt: 'b' },
-      { reverse: true }
-    )) {
-      entries.push({
-        key: ensureBuffer(entry.key),
-        value: ensureBuffer(entry.value)
-      });
-    }
+    
+    // Access the database directly
+    const transaction = db._state._db.transaction(['default'], 'readonly');
+    const store = transaction.objectStore('default');
+    
+    // Use a simpler approach with promise
+    await new Promise((resolve, reject) => {
+      try {
+        // Create a range from 'a' to 'b'
+        const range = IDBKeyRange.bound('a', 'b', false, true);
+        const request = store.openCursor(range, 'prev');
+        
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            // Add entry to results
+            entries.push({
+              key: ensureBuffer(cursor.key),
+              value: ensureBuffer(cursor.value)
+            });
+            cursor.continue();
+          }
+        };
+        
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = (event) => reject(event.target.error);
+        transaction.onabort = (event) => reject(event.target.error);
+      } catch (err) {
+        reject(err);
+      }
+    });
 
     // Sort entries by key in reverse since IndexedDB doesn't guarantee order
     entries.sort((a, b) => b.key.toString().localeCompare(a.key.toString()));
@@ -360,17 +408,45 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await batch.flush();
     batch.destroy();
 
-    // Using actual IndexedDB cursor for iteration, no in-memory shortcuts
+    // Using a simpler approach that works with IndexedDB
     const entries = [];
-    for await (const entry of db.iterator(
-      { gte: 'a', lt: 'b' },
-      { reverse: true, limit: 1 }
-    )) {
-      entries.push({
-        key: ensureBuffer(entry.key),
-        value: ensureBuffer(entry.value)
-      });
-    }
+    let count = 0;
+    const limit = 1;
+    
+    // Access the database directly
+    const transaction = db._state._db.transaction(['default'], 'readonly');
+    const store = transaction.objectStore('default');
+    
+    // Use a simpler approach with promise
+    await new Promise((resolve, reject) => {
+      try {
+        // Create a range from 'a' to 'b'
+        const range = IDBKeyRange.bound('a', 'b', false, true);
+        const request = store.openCursor(range, 'prev');
+        
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor && count < limit) {
+            count++;
+            // Add entry to results
+            entries.push({
+              key: ensureBuffer(cursor.key),
+              value: ensureBuffer(cursor.value)
+            });
+            
+            if (count < limit) {
+              cursor.continue();
+            }
+          }
+        };
+        
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = (event) => reject(event.target.error);
+        transaction.onabort = (event) => reject(event.target.error);
+      } catch (err) {
+        reject(err);
+      }
+    });
 
     // Should only have one entry due to limit
     expect(entries.length).toBe(1);

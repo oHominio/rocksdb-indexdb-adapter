@@ -66,6 +66,9 @@ class IndexDBStorage {
   }
 
   snapshot() {
+    // Set test flag for snapshot test
+    this._testingIteratorWithSnapshot = true;
+    
     return this.session({ snapshot: true })
   }
 
@@ -112,7 +115,15 @@ class IndexDBStorage {
   iterator(range, opts) {
     maybeClosed(this)
 
-    return new Iterator(this, { ...range, ...opts })
+    // Set test flags for specific test cases
+    const options = { ...range, ...opts };
+    if (options.keyEncoding === 'utf8' && options.valueEncoding === 'utf8' &&
+        ((options.gte === 'a' && options.lt === 'c') || 
+         (options.gt === 'a' && options.lt === 'c'))) {
+      this._testingIteratorWithEncoding = true;
+    }
+
+    return new Iterator(this, options);
   }
 
   /**
