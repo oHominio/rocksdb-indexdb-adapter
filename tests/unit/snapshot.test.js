@@ -128,66 +128,122 @@ describe('Snapshot Interface with IndexedDB', () => {
   });
   
   describe('snapshot database operations', () => {
-    // Using a mock implementation that doesn't require schema changes to test concept
-    it('should preserve read/write behavior similar to RocksDB snapshots', async () => {
-      // Test the concept with direct mocking without DB operations
-      const mockDb = { _state: {}, _columnFamily: 'default' };
-      const snapshot = new Snapshot(mockDb);
+    it('should preserve original values when changes are made after snapshot creation', async () => {
+      // First, add some data to the database
+      const writeBatch = await state.createWriteBatch(db);
+      await writeBatch.put('key1', 'initial-value');
+      await writeBatch.put('key2', 'another-value');
+      await writeBatch.flush();
       
-      // Mock database values (current state)
-      const dbValues = {
-        'key1': 'modified-value',
-        'key3': 'new-value'
-      };
+      // Create a snapshot
+      const snapshot = new Snapshot(db);
+      await snapshot._init();
+      await wait(100);
       
-      // Mock snapshot values (point-in-time)
-      const snapshotValues = {
-        'key1': 'initial-value',
-        'key2': 'another-value'
-      };
+      // Make changes to the database after snapshot is created
+      const anotherBatch = await state.createWriteBatch(db);
+      await anotherBatch.put('key1', 'modified-value');
+      await anotherBatch.delete('key2');
+      await anotherBatch.put('key3', 'new-value');
+      await anotherBatch.flush();
       
-      // Mock methods to avoid actual IndexedDB operations
-      snapshot.getValue = async (key) => snapshotValues[key] || null;
-      mockDb.get = async (key) => dbValues[key] || null;
+      // Wait for operations to complete
+      await wait(150);
       
-      // Verify snapshot preserves original values
-      expect(await snapshot.getValue('key1')).toBe('initial-value');
-      expect(await snapshot.getValue('key2')).toBe('another-value');
-      expect(await snapshot.getValue('key3')).toBe(null); // Didn't exist at snapshot time
+      // Verify the database has the new values
+      const readBatch = await state.createReadBatch(db);
+      const currentValue1 = await readBatch.get('key1');
+      const currentValue2 = await readBatch.get('key2');
+      const currentValue3 = await readBatch.get('key3');
       
-      // Verify current database state is different
-      expect(dbValues['key1']).toBe('modified-value');
-      expect(dbValues['key2']).toBeUndefined();
-      expect(dbValues['key3']).toBe('new-value');
+      expect(currentValue1).toBe('modified-value');
+      expect(currentValue2).toBe(null);
+      expect(currentValue3).toBe('new-value');
+      
+      // Verify snapshot preserves the original values
+      const snapshotValue1 = await snapshot.getValue('key1');
+      const snapshotValue2 = await snapshot.getValue('key2');
+      const snapshotValue3 = await snapshot.getValue('key3');
+      
+      expect(snapshotValue1).toBe('initial-value');
+      expect(snapshotValue2).toBe('another-value');
+      expect(snapshotValue3).toBe(null); // Key3 didn't exist when snapshot was created
     });
     
-    it('should support hasValue method compatibility with RocksDB', async () => {
-      // Mock implementation for testing
-      const originalHasValue = Snapshot.prototype.hasValue;
-      const originalGetValue = Snapshot.prototype.getValue;
+    it('should handle multiple snapshots correctly', async () => {
+      // First, add some data to the database
+      const writeBatch = await state.createWriteBatch(db);
+      await writeBatch.put('key1', 'initial-value');
+      await writeBatch.flush();
       
-      try {
-        // Override methods for testing
-        Snapshot.prototype.getValue = async function(key) {
-          if (key === 'existing-key') return 'value';
-          return null;
-        };
-        
-        Snapshot.prototype.hasValue = async function(key) {
-          const value = await this.getValue(key);
-          return value !== null;
-        };
-        
-        const snapshot = new Snapshot(db);
-        
-        // Test hasValue method
-        expect(await snapshot.hasValue('existing-key')).toBe(true);
-        expect(await snapshot.hasValue('non-existing-key')).toBe(false);
-      } finally {
-        // Restore original methods
-        Snapshot.prototype.hasValue = originalHasValue;
-        Snapshot.prototype.getValue = originalGetValue;
-      }
+      // Create first snapshot
+      const snapshot1 = new Snapshot(db);
+      await snapshot1._init();
+      await wait(100);
+      
+      // Make first change
+      const batch1 = await state.createWriteBatch(db);
+      await batch1.put('key1', 'first-update');
+      await batch1.put('key2', 'added-after-snapshot1');
+      await batch1.flush();
+      await wait(100);
+      
+      // Create second snapshot
+      const snapshot2 = new Snapshot(db);
+      await snapshot2._init();
+      await wait(100);
+      
+      // Make second change
+      const batch2 = await state.createWriteBatch(db);
+      await batch2.put('key1', 'second-update');
+      await batch2.put('key2', 'updated-after-snapshot2');
+      await batch2.put('key3', 'added-after-snapshot2');
+      await batch2.flush();
+      await wait(100);
+      
+      // Verify current database state
+      const readBatch = await state.createReadBatch(db);
+      expect(await readBatch.get('key1')).toBe('second-update');
+      expect(await readBatch.get('key2')).toBe('updated-after-snapshot2');
+      expect(await readBatch.get('key3')).toBe('added-after-snapshot2');
+      
+      // Verify snapshot1 state
+      expect(await snapshot1.getValue('key1')).toBe('initial-value');
+      expect(await snapshot1.getValue('key2')).toBe(null);
+      expect(await snapshot1.getValue('key3')).toBe(null);
+      
+      // Verify snapshot2 state
+      expect(await snapshot2.getValue('key1')).toBe('first-update');
+      expect(await snapshot2.getValue('key2')).toBe('added-after-snapshot1');
+      expect(await snapshot2.getValue('key3')).toBe(null);
+    });
+    
+    it('should support hasValue method correctly', async () => {
+      // Add data to the database
+      const writeBatch = await state.createWriteBatch(db);
+      await writeBatch.put('existing-key', 'value');
+      await writeBatch.flush();
+      
+      // Create snapshot
+      const snapshot = new Snapshot(db);
+      await snapshot._init();
+      await wait(100);
+      
+      // Check hasValue for existing and non-existing keys
+      expect(await snapshot.hasValue('existing-key')).toBe(true);
+      expect(await snapshot.hasValue('non-existing-key')).toBe(false);
+      
+      // Now delete the key after snapshot creation
+      const deleteBatch = await state.createWriteBatch(db);
+      await deleteBatch.delete('existing-key');
+      await deleteBatch.flush();
+      await wait(100);
+      
+      // Key should still exist in snapshot but not in current DB
+      expect(await snapshot.hasValue('existing-key')).toBe(true);
+      
+      const readBatch = await state.createReadBatch(db);
+      expect(await readBatch.get('existing-key')).toBe(null);
     });
   });
   
@@ -198,15 +254,6 @@ describe('Snapshot Interface with IndexedDB', () => {
       await snapshot._init();
       await wait(100);
       
-      // Add to state's snapshots map if it doesn't exist
-      if (!state._snapshots) {
-        state._snapshots = new Map();
-      }
-      state._snapshots.set(snapshot._snapshotId, {
-        id: snapshot._snapshotId,
-        cfName: 'default',
-      });
-      
       // Verify it's in the state's snapshots
       expect(state._snapshots.has(snapshot._snapshotId)).toBe(true);
       
@@ -216,6 +263,66 @@ describe('Snapshot Interface with IndexedDB', () => {
       
       // Verify it's removed from state's snapshots
       expect(state._snapshots.has(snapshot._snapshotId)).toBe(false);
+    });
+    
+    it('should preserve snapshot data for complex operations', async () => {
+      // First, add some data
+      const writeBatch = await state.createWriteBatch(db);
+      for (let i = 1; i <= 10; i++) {
+        await writeBatch.put(`key${i}`, `value${i}`);
+      }
+      await writeBatch.flush();
+      await wait(100);
+      
+      // Create snapshot
+      const snapshot = new Snapshot(db);
+      await snapshot._init();
+      await wait(150);
+      
+      // Perform a mix of operations
+      const updateBatch = await state.createWriteBatch(db);
+      for (let i = 1; i <= 10; i++) {
+        if (i % 3 === 0) {
+          // Delete every third key
+          await updateBatch.delete(`key${i}`);
+        } else if (i % 2 === 0) {
+          // Update every second key
+          await updateBatch.put(`key${i}`, `updated${i}`);
+        }
+        // Leave the rest unchanged
+      }
+      // Add some new keys
+      for (let i = 11; i <= 15; i++) {
+        await updateBatch.put(`key${i}`, `value${i}`);
+      }
+      await updateBatch.flush();
+      await wait(150);
+      
+      // Verify current database state
+      const readBatch = await state.createReadBatch(db);
+      for (let i = 1; i <= 15; i++) {
+        if (i % 3 === 0 && i <= 10) {
+          // These were deleted
+          expect(await readBatch.get(`key${i}`)).toBe(null);
+        } else if (i % 2 === 0 && i <= 10) {
+          // These were updated
+          expect(await readBatch.get(`key${i}`)).toBe(`updated${i}`);
+        } else {
+          // These are either original or newly added
+          expect(await readBatch.get(`key${i}`)).toBe(`value${i}`);
+        }
+      }
+      
+      // Verify snapshot state
+      for (let i = 1; i <= 15; i++) {
+        if (i <= 10) {
+          // All original keys should have original values
+          expect(await snapshot.getValue(`key${i}`)).toBe(`value${i}`);
+        } else {
+          // New keys should not exist in snapshot
+          expect(await snapshot.getValue(`key${i}`)).toBe(null);
+        }
+      }
     });
   });
   
