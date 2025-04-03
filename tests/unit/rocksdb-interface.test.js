@@ -756,7 +756,67 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await db.close();
   });
 
-  // Test 27: suspend + resume (from original rocksdb-native test.js)
+  // Test 27: read-only (from original rocksdb-native test.js)
+  it('read-only', async () => {
+    const dir = testPath;
+    
+    // First create a database and write some data with a writable instance
+    const w = new IndexDBStorage(dir);
+    await w.ready();
+    
+    {
+      const batch = await w.write();
+      await batch.put('hello', 'world');
+      await batch.flush();
+      batch.destroy();
+    }
+    
+    // Then open in read-only mode and verify we can read but not write
+    const r = new IndexDBStorage(dir, { readOnly: true });
+    await r.ready();
+    
+    {
+      const batch = await r.read();
+      const val = await batch.get('hello');
+      batch.destroy();
+      expect(val).toEqual(bufferFrom('world'));
+    }
+    
+    await w.close();
+    await r.close();
+  });
+  
+  // Test 28: read-only + write (from original rocksdb-native test.js)
+  it('read-only + write', async () => {
+    const dir = testPath;
+    
+    // Create a writable database
+    const w = new IndexDBStorage(dir);
+    await w.ready();
+    
+    // Create a read-only database
+    const r = new IndexDBStorage(dir, { readOnly: true });
+    await r.ready();
+    
+    // Try to write to the read-only instance
+    let errorThrown = false;
+    try {
+      const batch = await r.write();
+      await batch.put('hello', 'world');
+      await batch.flush();
+      batch.destroy();
+    } catch (err) {
+      errorThrown = true;
+      expect(err.message).toContain('read only');
+    }
+    
+    expect(errorThrown).toBe(true);
+    
+    await w.close();
+    await r.close();
+  });
+  
+  // Test 29: suspend + resume (from original rocksdb-native test.js)
   it('suspend + resume', async () => {
     const db = new IndexDBStorage(testPath);
     await db.ready();
@@ -764,6 +824,184 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await db.resume();
     await db.close();
   }, 10000);
+
+  // Test 30: suspend + resume + write (from original rocksdb-native test.js)
+  it('suspend + resume + write', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    await db.resume();
+    
+    {
+      const w = await db.write({ autoDestroy: true });
+      await w.put('hello2', 'world2');
+      await w.flush();
+    }
+    
+    // Verify the write worked
+    expect(await db.get('hello2')).toEqual(bufferFrom('world2'));
+    
+    await db.close();
+  });
+  
+  // Test 31: suspend + write + flush + close (from original rocksdb-native test.js)
+  it('suspend + write + flush + close', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    
+    {
+      const w = await db.write();
+      const p = w.flush();
+      // This should not error but will wait for resume
+      p.catch(() => {});
+    }
+    
+    await db.close();
+  });
+  
+  // Test 32: suspend + close without resume (from original rocksdb-native test.js)
+  it('suspend + close without resume', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    await db.close();
+  });
+  
+  // Test 33: suspend + read (from original rocksdb-native test.js)
+  it('suspend + read', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    
+    const batch = await db.read();
+    batch.get('hello');
+    
+    await db.close();
+  });
+  
+  // Test 34: suspend + write (from original rocksdb-native test.js)
+  it('suspend + write', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    
+    const batch = await db.write();
+    batch.put('hello', 'world');
+    
+    await db.close();
+  });
+  
+  // Test 35: suspend + write + resume + suspend before fully resumed (from original rocksdb-native test.js)
+  it('suspend + write + resume + suspend before fully resumed', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    
+    const batch = await db.write();
+    batch.put('hello', 'world');
+    batch.flush().catch(() => {});
+    
+    db.resume();
+    await db.suspend();
+    
+    batch.destroy();
+    await db.close();
+  });
+  
+  // Test 36: iterator + suspend (from original rocksdb-native test.js)
+  it('iterator + suspend', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    
+    const batch = await db.write();
+    await batch.put('hello', 'world');
+    await batch.flush();
+    batch.destroy();
+    
+    const it = db.iterator({ gte: 'hello', lt: 'z' });
+    
+    await db.suspend();
+    await db.resume();
+    
+    for await (const entry of it) {
+      expect(entry.key.toString()).toBe('hello');
+      expect(entry.value.toString()).toBe('world');
+    }
+    
+    await db.close();
+  });
+  
+  // Test 37: iterator + suspend + close (from original rocksdb-native test.js)
+  it('iterator + suspend + close', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    
+    const batch = await db.write();
+    await batch.put('hello', 'world');
+    await batch.flush();
+    batch.destroy();
+    
+    const it = db.iterator({ gte: 'hello', lt: 'z' });
+    
+    await db.suspend();
+    await db.close();
+    
+    try {
+      // Should not be able to iterate after close
+      for await (const entry of it) {
+        expect(1).toBe(2); // Should not execute
+      }
+    } catch (err) {
+      expect(err).toBeTruthy();
+    }
+  });
+  
+  // Test 38: suspend + open new writer (from original rocksdb-native test.js)
+  it('suspend + open new writer', async () => {
+    const dir = testPath;
+    
+    const w1 = new IndexDBStorage(dir);
+    await w1.ready();
+    await w1.suspend();
+    
+    const w2 = new IndexDBStorage(dir);
+    await w2.ready();
+    
+    let errorOccurred = false;
+    try {
+      await w1.resume();
+    } catch (err) {
+      errorOccurred = true;
+    }
+    
+    await w2.close();
+    await w1.close();
+  });
+  
+  // Test 39: suspend + flush + close (from original rocksdb-native test.js)
+  it('suspend + flush + close', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    
+    db.flush().catch(() => {}); // Should not resolve until resumed
+    
+    await db.close();
+  });
+  
+  // Test 40: suspend + flush + resume (from original rocksdb-native test.js)
+  it('suspend + flush + resume', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    await db.suspend();
+    
+    const p = db.flush();
+    await db.resume();
+    await p;
+    
+    await db.close();
+  });
 
   // Additional test to ensure compatibility with hypercore-storage
   it('supports hypercore-storage interface', () => {

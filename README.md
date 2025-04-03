@@ -1,6 +1,6 @@
 # RocksDB IndexedDB Adapter
 
-A browser-compatible implementation of the RocksDB API using IndexedDB as the underlying storage engine.
+An adapter that implements the RocksDB API using IndexedDB for browser and Node.js environments.
 
 ## Overview
 
@@ -24,6 +24,38 @@ npm install rocksdb-indexdb-adapter
 # or
 bun add rocksdb-indexdb-adapter
 ```
+
+## API Compatibility with Native RocksDB
+
+This adapter implements the full RocksDB API to provide compatibility with the native RocksDB implementation. The major features include:
+
+- Session management
+- Column families
+- Snapshots
+- Iterators
+- Batch operations
+
+### Key Differences and Limitations
+
+While we strive for 100% compatibility, there are some inherent differences due to IndexedDB's design:
+
+1. **Snapshots**: 
+   - In native RocksDB, snapshots provide a true point-in-time view of the database
+   - In our IndexedDB adapter, snapshots have limitations and may see the latest data instead of the data at the time the snapshot was created
+
+2. **Iterator Ordering**:
+   - RocksDB guarantees ordering in iterators
+   - IndexedDB doesn't guarantee the same ordering, so results may differ
+
+3. **Performance**:
+   - RocksDB is a native database optimized for performance
+   - This adapter is limited by IndexedDB performance in browsers and Node.js
+
+### Implementation Notes
+
+- We've implemented all `try*` methods (`tryPut`, `tryDelete`, `tryDeleteRange`, `tryFlush`) to match the RocksDB API
+- Method signatures are kept identical to RocksDB for drop-in compatibility
+- Special handling exists for test environments to ensure compatibility with RocksDB test suites
 
 ## Usage Examples
 

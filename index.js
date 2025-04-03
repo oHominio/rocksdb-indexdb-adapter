@@ -80,6 +80,10 @@ class IndexDBStorage {
     return this._state.ready()
   }
 
+  async open() {
+    return this._state.ready()
+  }
+
   async close({ force } = {}) {
     if (this._index !== -1) this._state.removeSession(this)
 
@@ -132,10 +136,10 @@ class IndexDBStorage {
    * @param {string|object} [columnFamily] - Column family name or object
    * @returns {Promise<Buffer|null>} Promise that resolves with the value or null if not found
    */
-  async get(key, columnFamily) {
+  async get(key, opts) {
     // Create a session with the given column family if provided
-    if (columnFamily) {
-      const session = this.session({ columnFamily });
+    if (opts && opts.columnFamily) {
+      const session = this.session({ columnFamily: opts.columnFamily });
       try {
         const value = await session.get(key);
         return value;
@@ -145,8 +149,10 @@ class IndexDBStorage {
     }
 
     // Create a read batch and execute the get operation
-    const batch = await this.read({ autoDestroy: true });
-    return await batch.get(key);
+    const batch = await this.read({ ...opts, capacity: 1, autoDestroy: true });
+    const value = batch.get(key);
+    batch.tryFlush();
+    return value;
   }
 
   /**
@@ -181,36 +187,12 @@ class IndexDBStorage {
       };
     }
 
-    try {
-      // First try to get results using the iterator
-      const it = this.iterator(range, { ...options, limit: 1 });
-      
-      // In case the database is not ready or we can't initialize the iterator,
-      // handle error and return null
-      try {
-        await it.ready();
-      } catch (err) {
-        console.error('Error initializing iterator for peek:', err);
-        await it.close().catch(() => {});
-        return null;
-      }
-      
-      // Get the first entry (if any)
-      let entry = null;
-      
-      for await (const item of it) {
-        entry = item;
-        break;
-      }
-      
-      // Close the iterator
-      await it.close().catch(() => {});
-      
-      return entry;
-    } catch (err) {
-      console.error('Error in peek:', err);
-      return null;
+    // Standard implementation matches RocksDB behavior
+    for await (const value of this.iterator({ ...range, ...options, limit: 1 })) {
+      return value;
     }
+
+    return null;
   }
 
   async read(opts) {
@@ -236,6 +218,14 @@ class IndexDBStorage {
     return;
   }
 
+  // Add tryPut method to match RocksDB
+  async tryPut(key, value, opts) {
+    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
+    batch.put(key, value);
+    batch.tryFlush();
+    return;
+  }
+
   async delete(key, opts) {
     const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
     await batch.delete(key);
@@ -243,10 +233,75 @@ class IndexDBStorage {
     return;
   }
 
+  // Add tryDelete method to match RocksDB
+  async tryDelete(key, opts) {
+    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
+    batch.delete(key);
+    batch.tryFlush();
+    return;
+  }
+
   async deleteRange(start, end, opts) {
     const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
     await batch.deleteRange(start, end)
     await batch.flush()
+  }
+
+  // Add tryDeleteRange method to match RocksDB
+  async tryDeleteRange(start, end, opts) {
+    // Create a special batch that directly deletes the range without going through batch operations
+    const db = this._state._db;
+    if (!db) await this._state.ready();
+    
+    const cfName = this._state.getColumnFamily(opts?.columnFamily || this._columnFamily).name;
+    
+    // Create a read transaction to find all keys in range
+    const encodedStart = typeof start === 'string' ? start : Buffer.from(start).toString();
+    const encodedEnd = typeof end === 'string' ? end : Buffer.from(end).toString();
+    
+    try {
+      // First get all keys in the range
+      const transaction = db.transaction([cfName], 'readonly');
+      const store = transaction.objectStore(cfName);
+      const range = IDBKeyRange.bound(encodedStart, encodedEnd, false, true);
+      
+      // Get all keys in the range
+      const keysToDelete = await new Promise((resolve, reject) => {
+        const keys = [];
+        const request = store.openKeyCursor(range);
+        
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            keys.push(cursor.key);
+            cursor.continue();
+          } else {
+            resolve(keys);
+          }
+        };
+        
+        request.onerror = (event) => {
+          reject(event.target.error);
+        };
+      });
+      
+      // Now delete all the keys
+      if (keysToDelete.length > 0) {
+        const writeTx = db.transaction([cfName], 'readwrite');
+        const writeStore = writeTx.objectStore(cfName);
+        
+        for (const key of keysToDelete) {
+          writeStore.delete(key);
+        }
+        
+        await new Promise((resolve, reject) => {
+          writeTx.oncomplete = resolve;
+          writeTx.onerror = reject;
+        });
+      }
+    } catch (err) {
+      console.error('Error in tryDeleteRange:', err);
+    }
   }
 
   _ref() {
