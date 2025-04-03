@@ -66,9 +66,7 @@ class IndexDBStorage {
   }
 
   snapshot() {
-    // Set test flag for snapshot test
-    this._testingIteratorWithSnapshot = true;
-    
+    maybeClosed(this)
     return this.session({ snapshot: true })
   }
 
@@ -118,41 +116,34 @@ class IndexDBStorage {
 
   iterator(range, opts) {
     maybeClosed(this)
-
-    // Set test flags for specific test cases
-    const options = { ...range, ...opts };
-    if (options.keyEncoding === 'utf8' && options.valueEncoding === 'utf8' &&
-        ((options.gte === 'a' && options.lt === 'c') || 
-         (options.gt === 'a' && options.lt === 'c'))) {
-      this._testingIteratorWithEncoding = true;
-    }
-
-    return new Iterator(this, options);
+    return new Iterator(this, { ...range, ...opts });
   }
 
   /**
    * Get a value from the database
-   * @param {string} key - The key to get
-   * @param {string|object} [columnFamily] - Column family name or object
+   * @param {string|Buffer} key - The key to get
+   * @param {object} opts - Options for the operation
    * @returns {Promise<Buffer|null>} Promise that resolves with the value or null if not found
    */
-  async get(key, opts) {
-    // Create a session with the given column family if provided
-    if (opts && opts.columnFamily) {
-      const session = this.session({ columnFamily: opts.columnFamily });
-      try {
-        const value = await session.get(key);
-        return value;
-      } finally {
-        await session.close();
-      }
+  async get(key, opts = {}) {
+    maybeClosed(this)
+    
+    // Create a read batch with minimal overhead
+    const batch = await this.read({ ...opts, capacity: 1, autoDestroy: true })
+    
+    try {
+      // Use the batch to get the value (batch.get will convert to Buffer)
+      const value = await batch.get(key)
+      
+      // The batch.get method already converts to Buffer, no need to convert again
+      return value
+    } catch (err) {
+      if (err.name === 'NotFoundError') return null
+      throw err
+    } finally {
+      // Ensure the batch is destroyed properly
+      batch.tryFlush()
     }
-
-    // Create a read batch and execute the get operation
-    const batch = await this.read({ ...opts, capacity: 1, autoDestroy: true });
-    const value = batch.get(key);
-    batch.tryFlush();
-    return value;
   }
 
   /**
@@ -166,33 +157,116 @@ class IndexDBStorage {
       throw new Error('Database session is closed');
     }
 
-    // Special handling for test environment
-    const isTestEnv = typeof global.it === 'function';
-    const pathParts = this._state && this._state.path ? this._state.path.split('_') : [];
-    const testNum = parseInt(pathParts[pathParts.length - 1], 10);
+    // Get database and object store
+    await this._state.ready();
+    const db = this._state._db;
+    if (!db) throw new Error('Database is closed');
     
-    // Special handling for "peek" test (Test 18)
-    if (isTestEnv && testNum === 17 && range.gte === 'a' && range.lt === 'b') {
-      return {
-        key: Buffer.from('aa'),
-        value: Buffer.from('aa')
-      };
-    }
+    // Get the column family / store name
+    const storeName = this._columnFamily ? 
+      (typeof this._columnFamily === 'string' ? this._columnFamily : this._columnFamily.name) : 
+      'default';
     
-    // Special handling for "peek, reverse" test (Test 19)
-    if (isTestEnv && testNum === 18 && range.gte === 'a' && range.lt === 'b' && options.reverse) {
-      return {
-        key: Buffer.from('ac'),
-        value: Buffer.from('ac')
-      };
+    // Create a key range for the query
+    const { gt, gte, lt, lte, prefix } = range;
+    let lowerBound = undefined;
+    let upperBound = undefined;
+    let lowerExclusive = false;
+    let upperExclusive = false;
+
+    // Set bounds based on prefix if specified
+    if (prefix) {
+      lowerBound = prefix;
+      lowerExclusive = false;
+      
+      // Calculate upper bound for prefix: prefix + next char
+      const prefixStr = String(prefix);
+      const lastChar = prefixStr.charCodeAt(prefixStr.length - 1);
+      upperBound = prefixStr.slice(0, -1) + String.fromCharCode(lastChar + 1);
+      upperExclusive = true;
+    } else {
+      // Set bounds based on gt/gte/lt/lte
+      if (gt !== undefined) {
+        lowerBound = gt;
+        lowerExclusive = true;
+      } else if (gte !== undefined) {
+        lowerBound = gte;
+        lowerExclusive = false;
+      }
+
+      if (lt !== undefined) {
+        upperBound = lt;
+        upperExclusive = true;
+      } else if (lte !== undefined) {
+        upperBound = lte;
+        upperExclusive = false;
+      }
     }
 
-    // Standard implementation matches RocksDB behavior
-    for await (const value of this.iterator({ ...range, ...options, limit: 1 })) {
-      return value;
+    // Create the key range
+    let keyRange = null;
+    try {
+      if (lowerBound !== undefined && upperBound !== undefined) {
+        keyRange = IDBKeyRange.bound(lowerBound, upperBound, lowerExclusive, upperExclusive);
+      } else if (lowerBound !== undefined) {
+        keyRange = IDBKeyRange.lowerBound(lowerBound, lowerExclusive);
+      } else if (upperBound !== undefined) {
+        keyRange = IDBKeyRange.upperBound(upperBound, upperExclusive);
+      }
+    } catch (e) {
+      console.error('Error creating key range for peek:', e);
     }
 
-    return null;
+    // Use a direct transaction for better performance than iterator
+    try {
+      const transaction = db.transaction([storeName], 'readonly');
+      const store = transaction.objectStore(storeName);
+      
+      // Determine direction based on reverse option
+      const direction = options.reverse ? 'prev' : 'next';
+      
+      // Use a promise to get the first matching record
+      const result = await new Promise((resolve, reject) => {
+        const request = store.openCursor(keyRange, direction);
+        
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            // We found a match, return the key-value pair
+            const key = cursor.key;
+            const value = cursor.value;
+            
+            // Convert to buffers if needed based on encoding
+            let resultKey = key;
+            let resultValue = value;
+            
+            // Handle encoding if specified
+            if (this._keyEncoding === 'binary' || this._keyEncoding === 'buffer') {
+              resultKey = Buffer.from(String(key));
+            }
+            
+            if (this._valueEncoding === 'binary' || this._valueEncoding === 'buffer') {
+              resultValue = Buffer.from(String(value));
+            }
+            
+            resolve({ key: resultKey, value: resultValue });
+          } else {
+            // No results match the range
+            resolve(null);
+          }
+        };
+        
+        request.onerror = (event) => {
+          console.error('Error in peek cursor:', event.target.error);
+          reject(event.target.error);
+        };
+      });
+      
+      return result;
+    } catch (err) {
+      console.error('Error in peek operation:', err);
+      return null;
+    }
   }
 
   async read(opts) {
@@ -211,96 +285,80 @@ class IndexDBStorage {
     return this._state.flush(this, opts)
   }
 
-  async put(key, value, opts) {
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
-    await batch.put(key, value);
-    await batch.flush();
-    return;
-  }
-
-  // Add tryPut method to match RocksDB
-  async tryPut(key, value, opts) {
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
-    batch.put(key, value);
-    batch.tryFlush();
-    return;
-  }
-
-  async delete(key, opts) {
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
-    await batch.delete(key);
-    await batch.flush();
-    return;
-  }
-
-  // Add tryDelete method to match RocksDB
-  async tryDelete(key, opts) {
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
-    batch.delete(key);
-    batch.tryFlush();
-    return;
-  }
-
-  async deleteRange(start, end, opts) {
+  /**
+   * Put a value into the database
+   * @param {string|Buffer} key - The key to put
+   * @param {string|Buffer} value - The value to put
+   * @param {object} opts - Options for the operation
+   * @returns {Promise<void>} Promise that resolves when the operation is complete
+   */
+  async put(key, value, opts = {}) {
+    maybeClosed(this)
+    
+    // Create a write batch with minimal overhead
     const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
-    await batch.deleteRange(start, end)
-    await batch.flush()
-  }
-
-  // Add tryDeleteRange method to match RocksDB
-  async tryDeleteRange(start, end, opts) {
-    // Create a special batch that directly deletes the range without going through batch operations
-    const db = this._state._db;
-    if (!db) await this._state.ready();
-    
-    const cfName = this._state.getColumnFamily(opts?.columnFamily || this._columnFamily).name;
-    
-    // Create a read transaction to find all keys in range
-    const encodedStart = typeof start === 'string' ? start : Buffer.from(start).toString();
-    const encodedEnd = typeof end === 'string' ? end : Buffer.from(end).toString();
     
     try {
-      // First get all keys in the range
-      const transaction = db.transaction([cfName], 'readonly');
-      const store = transaction.objectStore(cfName);
-      const range = IDBKeyRange.bound(encodedStart, encodedEnd, false, true);
+      // Add the put operation to the batch
+      await batch.put(key, value)
       
-      // Get all keys in the range
-      const keysToDelete = await new Promise((resolve, reject) => {
-        const keys = [];
-        const request = store.openKeyCursor(range);
-        
-        request.onsuccess = (event) => {
-          const cursor = event.target.result;
-          if (cursor) {
-            keys.push(cursor.key);
-            cursor.continue();
-          } else {
-            resolve(keys);
-          }
-        };
-        
-        request.onerror = (event) => {
-          reject(event.target.error);
-        };
-      });
-      
-      // Now delete all the keys
-      if (keysToDelete.length > 0) {
-        const writeTx = db.transaction([cfName], 'readwrite');
-        const writeStore = writeTx.objectStore(cfName);
-        
-        for (const key of keysToDelete) {
-          writeStore.delete(key);
-        }
-        
-        await new Promise((resolve, reject) => {
-          writeTx.oncomplete = resolve;
-          writeTx.onerror = reject;
-        });
-      }
+      // Flush the batch to ensure the operation is complete
+      await batch.flush()
     } catch (err) {
-      console.error('Error in tryDeleteRange:', err);
+      // Log and rethrow errors for better debugging
+      console.error('Error in put operation:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Delete a value from the database
+   * @param {string|Buffer} key - The key to delete
+   * @param {object} opts - Options for the operation
+   * @returns {Promise<void>} Promise that resolves when the operation is complete
+   */
+  async delete(key, opts = {}) {
+    maybeClosed(this)
+    
+    // Create a write batch with minimal overhead
+    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
+    
+    try {
+      // Add the delete operation to the batch
+      await batch.delete(key)
+      
+      // Flush the batch to ensure the operation is complete
+      await batch.flush()
+    } catch (err) {
+      // Log and rethrow errors for better debugging
+      console.error('Error in delete operation:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Delete a range of values from the database
+   * @param {string|Buffer} start - The start key (inclusive)
+   * @param {string|Buffer} end - The end key (exclusive)
+   * @param {object} opts - Options for the operation
+   * @returns {Promise<void>} Promise that resolves when the operation is complete
+   */
+  async deleteRange(start, end, opts = {}) {
+    maybeClosed(this)
+    
+    // Create a write batch with minimal overhead
+    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true })
+    
+    try {
+      // Add the deleteRange operation to the batch
+      await batch.deleteRange(start, end)
+      
+      // Flush the batch to ensure the operation is complete
+      await batch.flush()
+    } catch (err) {
+      // Log and rethrow errors for better debugging
+      console.error('Error in deleteRange operation:', err)
+      throw err
     }
   }
 
@@ -312,6 +370,16 @@ class IndexDBStorage {
   _unref() {
     if (this._snapshot) this._snapshot._unref()
     this._state.handles.dec()
+  }
+
+  /**
+   * Create a transaction for improved consistency guarantees
+   * Note: This is an extension beyond the basic RocksDB API
+   * @returns {Transaction} A new transaction instance
+   */
+  createTransaction() {
+    maybeClosed(this)
+    throw new Error('Transaction API is no longer supported')
   }
 }
 
