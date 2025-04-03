@@ -1,5 +1,7 @@
 # RocksDB IndexedDB Adapter
 
+> **⚠️ EXPERIMENTAL: This library is in early development and not yet ready for production use. APIs may change, features may be incomplete, and bugs are likely. Use at your own risk.**
+
 An adapter that implements the RocksDB API using IndexedDB for browser and Node.js environments.
 
 ## Overview
@@ -64,8 +66,8 @@ While we strive for 100% compatibility, there are some inherent differences due 
 ```javascript
 import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
 
-// Open a database
-const db = new IndexDBStorage('./my-database')
+// Open a database (use a simple name, not a file path)
+const db = new IndexDBStorage('my-database')
 await db.open()
 
 // Write data
@@ -87,7 +89,7 @@ await db.close()
 ```javascript
 import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
 
-const db = new IndexDBStorage('./my-database')
+const db = new IndexDBStorage('my-database')
 await db.open()
 
 // Create a write batch
@@ -110,7 +112,7 @@ await batch.flush()
 ```javascript
 import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
 
-const db = new IndexDBStorage('./my-database')
+const db = new IndexDBStorage('my-database')
 await db.open()
 
 // Add some data
@@ -132,7 +134,7 @@ for await (const [key, value] of iterator) {
 ```javascript
 import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
 
-const db = new IndexDBStorage('./my-database')
+const db = new IndexDBStorage('my-database')
 await db.open()
 
 // Add initial data

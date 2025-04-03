@@ -1,5 +1,13 @@
 # @ohominio/rocksdb-indexdb-adapter
 
+## 0.1.1
+
+### Patch Changes
+
+- Improving Readme
+  - Added experimental disclaimer
+  - Fixed database name examples
+
 ## 0.1.0
 
 ### Initial Release
