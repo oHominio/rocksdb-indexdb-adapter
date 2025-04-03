@@ -10,26 +10,26 @@ This library provides a web-friendly implementation of the RocksDB key-value sto
 
 ## Features
 
-- Complete API compatibility with RocksDB
+- API compatibility with RocksDB for browser environments
 - Browser-friendly implementation using IndexedDB
 - Support for key operations: get, put, delete, deleteRange
-- Batch operations for efficient writes
+- Batch operations for writes
 - Iterators with support for prefix scanning
 - Column family support
-- True point-in-time snapshot functionality
+- Snapshot functionality
 - Compatible with the Hypercore storage interface
 
 ## Installation
 
 ```bash
-npm install rocksdb-indexdb-adapter
+npm install @ohominio/rocksdb-indexdb-adapter
 # or
-bun add rocksdb-indexdb-adapter
+bun add @ohominio/rocksdb-indexdb-adapter
 ```
 
 ## API Compatibility with Native RocksDB
 
-This adapter implements the full RocksDB API to provide compatibility with the native RocksDB implementation. The major features include:
+This adapter implements the RocksDB API to provide compatibility with the native RocksDB implementation. The major features include:
 
 - Session management
 - Column families
@@ -39,10 +39,10 @@ This adapter implements the full RocksDB API to provide compatibility with the n
 
 ### Key Differences and Limitations
 
-While we strive for 100% compatibility, there are some inherent differences due to IndexedDB's design:
+While we strive for compatibility, there are some inherent differences due to IndexedDB's design:
 
 1. **Snapshots**: 
-   - Our implementation creates true point-in-time snapshots by copying data to dedicated snapshot stores
+   - Our implementation creates point-in-time snapshots by copying data to dedicated snapshot stores
    - This provides isolation but has performance implications for large databases
 
 2. **Iterator Ordering**:
@@ -55,16 +55,16 @@ While we strive for 100% compatibility, there are some inherent differences due 
 
 ### Implementation Notes
 
-- We've implemented all `try*` methods (`tryPut`, `tryDelete`, `tryDeleteRange`, `tryFlush`) to match the RocksDB API
-- Method signatures are kept identical to RocksDB for drop-in compatibility
-- Special handling exists for test environments to ensure compatibility with RocksDB test suites
+- The API aims to match RocksDB's core functionality but is optimized for browser environments
+- Method signatures are designed to be compatible with RocksDB where possible
+- This adapter focuses on providing the essential functionality needed by Hypercore and similar applications
 
 ## Usage Examples
 
 ### Basic Operations
 
 ```javascript
-import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
+import { IndexDBStorage } from '@ohominio/rocksdb-indexdb-adapter'
 
 // Open a database (use a simple name, not a file path)
 const db = new IndexDBStorage('my-database')
@@ -87,7 +87,7 @@ await db.close()
 ### Batch Operations
 
 ```javascript
-import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
+import { IndexDBStorage } from '@ohominio/rocksdb-indexdb-adapter'
 
 const db = new IndexDBStorage('my-database')
 await db.open()
@@ -110,7 +110,7 @@ await batch.flush()
 ### Using Iterators
 
 ```javascript
-import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
+import { IndexDBStorage } from '@ohominio/rocksdb-indexdb-adapter'
 
 const db = new IndexDBStorage('my-database')
 await db.open()
@@ -132,7 +132,7 @@ for await (const [key, value] of iterator) {
 ### Using Snapshots
 
 ```javascript
-import { IndexDBStorage } from 'rocksdb-indexdb-adapter'
+import { IndexDBStorage } from '@ohominio/rocksdb-indexdb-adapter'
 
 const db = new IndexDBStorage('my-database')
 await db.open()
@@ -158,29 +158,26 @@ snapshot.destroy()
 
 ## Snapshot Implementation
 
-Our snapshot implementation provides true point-in-time isolation similar to native RocksDB:
+Our snapshot implementation provides point-in-time views similar to native RocksDB:
 
 ### How Our Snapshots Work
 
-- **Dedicated Storage**: Each snapshot creates a separate IndexedDB object store that contains a copy of data at creation time
-- **True Point-in-time View**: Snapshots maintain the exact state of the database when they were created
-- **Cleanup Process**: Old snapshots are automatically removed when new ones are created
-- **Performance Considerations**: Creating a snapshot involves copying data, which can be expensive for large datasets
+- **Dedicated Storage**: Each snapshot uses a dedicated IndexedDB store to track data at creation time
+- **Point-in-time View**: Snapshots maintain the state of the database when they were created
+- **Reference Counting**: Snapshots are properly reference-counted for cleanup
+- **Performance Considerations**: Using snapshots has performance implications for large datasets
 
 ### Comparison with Native RocksDB
 
 #### Native RocksDB Snapshots
-- Create true point-in-time immutable views of the database
+- Create immutable point-in-time views of the database
 - Use RocksDB's LSM tree architecture to maintain historical versions
-- Snapshots always return data as it existed at the time the snapshot was created
 - Very efficient due to the immutable nature of RocksDB's storage design
 
 #### IndexedDB Adapter Snapshots
-- Provide the same API interface as RocksDB snapshots for compatibility
-- Use dedicated object stores to maintain point-in-time copies of data
-- Always return data as it existed at the time the snapshot was created
-- Less efficient than RocksDB due to data copying, but more efficient than previous implementations
-- Only keep the most recent snapshot to save space and avoid version conflicts
+- Provide a compatible API interface for RocksDB-like snapshots
+- Use dedicated storage to maintain point-in-time data views
+- Optimized for browser environments but with different performance characteristics
 
 ## API Reference
 
@@ -215,4 +212,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT 
+MIT
