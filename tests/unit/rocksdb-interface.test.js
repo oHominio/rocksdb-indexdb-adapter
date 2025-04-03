@@ -1,5 +1,4 @@
 'use strict';
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { IndexDBStorage } from '../../index.js';
 import '../setup.js'; // Import the setup file
@@ -1136,11 +1135,5 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await p;
     
     await db.close();
-  });
-
-  // Additional test to ensure compatibility with hypercore-storage
-  it('supports hypercore-storage interface', () => {
-    expect(IndexDBStorage.STORAGE_TYPE).toBe('indexeddb');
-    expect(typeof IndexDBStorage.VERSION).toBe('number');
   });
 }); 

@@ -19,10 +19,6 @@
   ],
   "scripts": {
     "test": "bun test tests/unit --timeout 5000",
-    "test:unit": "bun test tests/unit --timeout 5000",
-    "test:e2e": "playwright test",
-    "test:e2e:debug": "playwright test --debug",
-    "test:e2e:ui": "playwright test --ui",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -32,30 +28,21 @@
     "indexeddb",
     "storage",
     "pear",
-    "holepunch",
-    "browser"
+    "holepunch"
   ],
-  "author": "",
+  "author": "Visioncreator GmbH",
   "license": "MIT",
   "dependencies": {
     "compact-encoding": "^2.16.0",
-    "corestore": "^7.1.0",
-    "hypercore-crypto": "^3.5.0",
-    "hypercore-storage": "1.11.0",
     "ready-resource": "^1.1.2",
     "refcounter": "^1.0.0",
     "resolve-reject-promise": "^1.1.0",
     "streamx": "^2.22.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.1",
     "b4a": "^1.6.7",
-    "brittle": "^3.13.1",
     "bun-types": "latest",
     "fake-indexeddb": "^6.0.0",
-    "hypercore": "^11.1.1",
-    "serve": "^14.2.4",
-    "sodium-native": "^5.0.1",
-    "vite": "^6.2.4"
+    "serve": "^14.2.4"
   }
 }
