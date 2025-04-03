@@ -1,5 +1,5 @@
 {
-  "name": "rocksdb-indexdb-adapter",
+  "name": "@ohominio/rocksdb-indexdb-adapter",
   "version": "0.1.0",
   "description": "IndexedDB storage adapter for Hypercore with RocksDB-compatible interface",
   "type": "module",
@@ -15,20 +15,31 @@
   "module": "./index.js",
   "files": [
     "index.js",
-    "lib"
+    "lib",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "bun test tests/unit --timeout 5000",
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "echo 'No build step needed for JavaScript library'",
+    "preview": "vite preview",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish",
+    "prepare-release": "npm run test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oHominio/rocksdb-indexdb-adapter.git"
   },
   "keywords": [
     "hypercore",
     "indexeddb",
     "storage",
     "pear",
-    "holepunch"
+    "holepunch",
+    "rocksdb"
   ],
   "author": "Visioncreator GmbH",
   "license": "MIT",
@@ -40,9 +51,13 @@
     "streamx": "^2.22.0"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.28.1",
     "b4a": "^1.6.7",
     "bun-types": "latest",
     "fake-indexeddb": "^6.0.0",
     "serve": "^14.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
