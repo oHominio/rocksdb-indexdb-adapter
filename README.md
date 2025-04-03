@@ -14,7 +14,7 @@ This library provides a web-friendly implementation of the RocksDB key-value sto
 - Batch operations for efficient writes
 - Iterators with support for prefix scanning
 - Column family support
-- Snapshot functionality
+- True point-in-time snapshot functionality
 - Compatible with the Hypercore storage interface
 
 ## Installation
@@ -40,8 +40,8 @@ This adapter implements the full RocksDB API to provide compatibility with the n
 While we strive for 100% compatibility, there are some inherent differences due to IndexedDB's design:
 
 1. **Snapshots**: 
-   - In native RocksDB, snapshots provide a true point-in-time view of the database
-   - In our IndexedDB adapter, snapshots have limitations and may see the latest data instead of the data at the time the snapshot was created
+   - Our implementation creates true point-in-time snapshots by copying data to dedicated snapshot stores
+   - This provides isolation but has performance implications for large databases
 
 2. **Iterator Ordering**:
    - RocksDB guarantees ordering in iterators
@@ -147,32 +147,38 @@ await db.put('key1', 'modified-value')
 // Read current value
 console.log((await db.get('key1')).toString()) // 'modified-value'
 
-// Read from snapshot
-// Note: In the IndexedDB adapter, this will also return 'modified-value'
-console.log((await snapshot.get('key1')).toString()) // 'modified-value'
+// Read from snapshot - returns the point-in-time value
+console.log((await snapshot.get('key1')).toString()) // 'initial-value'
 
 // Release the snapshot when done
 snapshot.destroy()
 ```
 
-## Snapshot Implementation Notes
+## Snapshot Implementation
 
-The snapshot functionality in this adapter differs from native RocksDB:
+Our snapshot implementation provides true point-in-time isolation similar to native RocksDB:
 
-### Native RocksDB Snapshots
+### How Our Snapshots Work
+
+- **Dedicated Storage**: Each snapshot creates a separate IndexedDB object store that contains a copy of data at creation time
+- **True Point-in-time View**: Snapshots maintain the exact state of the database when they were created
+- **Cleanup Process**: Old snapshots are automatically removed when new ones are created
+- **Performance Considerations**: Creating a snapshot involves copying data, which can be expensive for large datasets
+
+### Comparison with Native RocksDB
+
+#### Native RocksDB Snapshots
 - Create true point-in-time immutable views of the database
 - Use RocksDB's LSM tree architecture to maintain historical versions
 - Snapshots always return data as it existed at the time the snapshot was created
-- Perfectly isolate reads from ongoing write operations
+- Very efficient due to the immutable nature of RocksDB's storage design
 
-### IndexedDB Adapter Snapshots
+#### IndexedDB Adapter Snapshots
 - Provide the same API interface as RocksDB snapshots for compatibility
-- Use a simplified implementation that relies on the current state of the database
-- Return the latest values rather than historical values when reading from a snapshot
-- Prioritize reliability and performance in browser environments
-- Avoid the complexity of maintaining multiple data versions in IndexedDB
-
-This implementation choice makes the adapter more efficient and reliable in browser environments, where maintaining multiple versions of data would be costly. Applications should be aware of this difference if they heavily rely on true point-in-time snapshots.
+- Use dedicated object stores to maintain point-in-time copies of data
+- Always return data as it existed at the time the snapshot was created
+- Less efficient than RocksDB due to data copying, but more efficient than previous implementations
+- Only keep the most recent snapshot to save space and avoid version conflicts
 
 ## API Reference
 
@@ -198,7 +204,7 @@ See the full API documentation for detailed information on methods and parameter
 
 - Performance characteristics differ from native RocksDB
 - Some advanced RocksDB features may have simplified implementations
-- Snapshots return current values rather than historical values
+- Creating snapshots can be costly for large databases
 - Adapted to work within browser security and storage constraints
 
 ## Contributing
