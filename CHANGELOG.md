@@ -1,5 +1,11 @@
 # @ohominio/rocksdb-indexdb-adapter
 
+## 0.2.0
+
+### Minor Changes
+
+- Added missing tryPut, tryDelete, and tryDeleteRange methods
+
 ## 0.1.2
 
 ### Patch Changes

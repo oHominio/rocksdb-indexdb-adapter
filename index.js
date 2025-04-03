@@ -362,6 +362,50 @@ class IndexDBStorage {
     }
   }
 
+  /**
+   * Try to put a value into the database (RocksDB compatibility)
+   * @param {string|Buffer} key - The key to put
+   * @param {string|Buffer} value - The value to put
+   * @returns {Promise<void>} Promise that resolves when the operation is complete
+   */
+  async tryPut(key, value) {
+    maybeClosed(this)
+    
+    const batch = await this.write({ capacity: 1, autoDestroy: true })
+    await batch.tryPut(key, value)
+    await batch.flush()
+    return Promise.resolve()
+  }
+
+  /**
+   * Try to delete a value from the database (RocksDB compatibility)
+   * @param {string|Buffer} key - The key to delete
+   * @returns {Promise<void>} Promise that resolves when the operation is complete
+   */
+  async tryDelete(key) {
+    maybeClosed(this)
+    
+    const batch = await this.write({ capacity: 1, autoDestroy: true })
+    await batch.tryDelete(key)
+    await batch.flush()
+    return Promise.resolve()
+  }
+
+  /**
+   * Try to delete a range of values (RocksDB compatibility)
+   * @param {string|Buffer} start - The start key (inclusive)
+   * @param {string|Buffer} end - The end key (exclusive)
+   * @returns {Promise<void>} Promise that resolves when the operation is complete
+   */
+  async tryDeleteRange(start, end) {
+    maybeClosed(this)
+    
+    const batch = await this.write({ capacity: 1, autoDestroy: true })
+    await batch.tryDeleteRange(start, end)
+    await batch.flush()
+    return Promise.resolve()
+  }
+
   _ref() {
     if (this._snapshot) this._snapshot._ref()
     this._state.handles.inc()

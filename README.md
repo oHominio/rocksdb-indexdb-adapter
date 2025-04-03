@@ -18,6 +18,8 @@ This library provides a web-friendly implementation of the RocksDB key-value sto
 - Column family support
 - Snapshot functionality
 - Compatible with the Hypercore storage interface
+- Full support for `try*` methods required by Hypercore's View implementation
+- Robust range deletion with fallbacks for different key types
 
 ## Installation
 
@@ -36,6 +38,57 @@ This adapter implements the RocksDB API to provide compatibility with the native
 - Snapshots
 - Iterators
 - Batch operations
+- Advanced range operations
+- Full Hypercore compatibility
+
+### Hypercore Compatibility
+
+The adapter is specifically designed to work seamlessly with Hypercore's storage interface:
+
+- **Complete Method Coverage**: Implements all methods required by Hypercore, including specialized methods like `tryPut`, `tryDelete`, and `tryDeleteRange`
+- **Buffer Support**: Properly handles Buffer keys and values as used extensively by Hypercore
+- **Range Operations**: Robust implementation of range deletion with multiple fallback mechanisms for browser compatibility
+- **View.flush() Compatible**: Fully supports Hypercore's View.flush() pattern with transactional operations
+
+### Using Try Methods for Hypercore
+
+```javascript
+import { IndexDBStorage } from '@ohominio/rocksdb-indexdb-adapter'
+
+const db = new IndexDBStorage('my-database')
+await db.open()
+
+// These methods are used by Hypercore's View implementation
+const batch = await db.write()
+
+// Try methods don't throw errors if the operation can't be performed
+await batch.tryPut('key1', Buffer.from('value1')) // Works with buffers
+await batch.tryDelete('key2')
+await batch.tryDeleteRange('prefix:', 'prefix;') // Range deletion (start inclusive, end exclusive)
+
+await batch.flush()
+batch.destroy()
+```
+
+### Range Delete Implementation
+
+```javascript
+import { IndexDBStorage } from '@ohominio/rocksdb-indexdb-adapter'
+
+const db = new IndexDBStorage('my-database')
+await db.open()
+
+// Add some data with a common prefix
+await db.put('users:001', 'Alice')
+await db.put('users:002', 'Bob')
+await db.put('users:003', 'Charlie')
+
+// Delete all users in a single operation
+await db.deleteRange('users:', 'users;')
+
+// All user data is now removed
+console.log(await db.get('users:001')) // null
+```
 
 ### Key Differences and Limitations
 
@@ -190,6 +243,9 @@ Our snapshot implementation provides point-in-time views similar to native Rocks
 - `put(key, value)`
 - `delete(key)`
 - `deleteRange(start, end)`
+- `tryPut(key, value)` - Non-throwing version of put
+- `tryDelete(key)` - Non-throwing version of delete
+- `tryDeleteRange(start, end)` - Non-throwing version of deleteRange
 - `batch(options)`
 - `iterator(options)`
 - `snapshot()`

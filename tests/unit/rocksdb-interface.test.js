@@ -213,82 +213,97 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     await db.close();
   }, 10000);
 
-  // Test 9: delete range (from original rocksdb-native test.js)
+  // Test 9: delete range
   it('delete range', async () => {
-    const db = new IndexDBStorage(testPath);
-    await db.ready();
+    const db = new IndexDBStorage(testPath)
+    await db.ready()
 
-    {
-      const batch = await db.write();
-      await batch.put('aa', 'aa');
-      await batch.put('ab', 'ab');
-      await batch.put('ba', 'ba');
-      await batch.put('bb', 'bb');
-      await batch.put('bc', 'bc');
-      await batch.put('ac', 'ac');
-      await batch.flush();
+    // Setup data
+    const batch = await db.write()
+    await batch.put('aa', 'aa')
+    await batch.put('ab', 'ab')
+    await batch.put('ac', 'ac')
+    await batch.put('ba', 'ba')
+    await batch.put('bb', 'bb')
+    await batch.put('bc', 'bc')
+    await batch.flush()
+    
+    // Verify initial state
+    const readBatch = await db.read()
+    expect(await readBatch.get('aa')).toEqual(bufferFrom('aa'))
+    expect(await readBatch.get('ab')).toEqual(bufferFrom('ab'))
+    expect(await readBatch.get('ac')).toEqual(bufferFrom('ac'))
+    expect(await readBatch.get('ba')).toEqual(bufferFrom('ba'))
+    expect(await readBatch.get('bb')).toEqual(bufferFrom('bb'))
+    expect(await readBatch.get('bc')).toEqual(bufferFrom('bc'))
+    await readBatch.flush()
+    readBatch.destroy()
 
-      await batch.deleteRange('a', 'b');
-      await batch.flush();
-      batch.destroy();
-    }
-    {
-      const batch = await db.read();
-      const p = [];
-      p.push(batch.get('aa'));
-      p.push(batch.get('ab'));
-      p.push(batch.get('ac'));
-      p.push(batch.get('ba'));
-      p.push(batch.get('bb'));
-      p.push(batch.get('bc'));
-      await batch.flush();
-      batch.destroy();
+    // Delete range
+    const rangeBatch = await db.write()
+    await rangeBatch.deleteRange('a', 'b')
+    await rangeBatch.flush()
+    rangeBatch.destroy()
+    
+    // Verify deletion - all keys in range should be deleted
+    const verifyBatch = await db.read()
+    const p = []
+    p.push(verifyBatch.get('aa'))
+    p.push(verifyBatch.get('ab'))
+    p.push(verifyBatch.get('ac'))
+    p.push(verifyBatch.get('ba'))
+    p.push(verifyBatch.get('bb'))
+    p.push(verifyBatch.get('bc'))
+    await verifyBatch.flush()
+    verifyBatch.destroy()
 
-      const results = await Promise.all(p);
-      expect(results).toEqual([
-        null,
-        null,
-        null,
-        bufferFrom('ba'),
-        bufferFrom('bb'),
-        bufferFrom('bc')
-      ]);
-    }
+    const results = await Promise.all(p)
+    expect(results).toEqual([
+      null,
+      null,
+      null,
+      bufferFrom('ba'),
+      bufferFrom('bb'),
+      bufferFrom('bc')
+    ])
 
-    await db.close();
-  }, 10000);
+    batch.destroy()
+    db.close()
+  })
 
-  // Test 10: delete range, end does not exist (from original rocksdb-native test.js)
+  // Test 10: delete range, end does not exist
   it('delete range, end does not exist', async () => {
-    const db = new IndexDBStorage(testPath);
-    await db.ready();
+    const db = new IndexDBStorage(testPath)
+    await db.ready()
 
-    {
-      const batch = await db.write();
-      await batch.put('aa', 'aa');
-      await batch.put('ab', 'ab');
-      await batch.put('ac', 'ac');
-      await batch.flush();
+    // Setup data
+    const batch = await db.write()
+    await batch.put('aa', 'aa')
+    await batch.put('ab', 'ab')
+    await batch.put('ac', 'ac')
+    await batch.flush()
+    
+    // Delete range
+    const rangeBatch = await db.write()
+    await rangeBatch.deleteRange('a', 'b')
+    await rangeBatch.flush()
+    rangeBatch.destroy()
+    
+    // Verify deletion - all keys in range should be deleted
+    const verifyBatch = await db.read()
+    const p = []
+    p.push(verifyBatch.get('aa'))
+    p.push(verifyBatch.get('ab'))
+    p.push(verifyBatch.get('ac'))
+    await verifyBatch.flush()
+    verifyBatch.destroy()
 
-      await batch.deleteRange('a', 'b');
-      await batch.flush();
-      batch.destroy();
-    }
-    {
-      const batch = await db.read();
-      const p = [];
-      p.push(batch.get('aa'));
-      p.push(batch.get('ab'));
-      p.push(batch.get('ac'));
-      await batch.flush();
-      batch.destroy();
+    const results = await Promise.all(p)
+    expect(results).toEqual([null, null, null])
 
-      const results = await Promise.all(p);
-      expect(results).toEqual([null, null, null]);
-    }
-
-    await db.close();
-  }, 10000);
+    batch.destroy()
+    db.close()
+  })
 
   // Test 11: prefix iterator (from original rocksdb-native test.js)
   it('prefix iterator', async () => {
@@ -1133,6 +1148,216 @@ describe('RocksDB Interface with IndexedDB Adapter', () => {
     const p = db.flush();
     await db.resume();
     await p;
+    
+    await db.close();
+  });
+
+  // Test 43: Test the tryDeleteRange method
+  it('tryDeleteRange', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    
+    // Create a batch
+    const rangeBatch = await db.write({ autoDestroy: true });
+    
+    // Insert values
+    await db.put('range-a', 'start-value');
+    await db.put('range-aa', 'value-aa');
+    await db.put('range-ab', 'value-ab');
+    await db.put('range-b', 'end-value');
+    
+    // Delete range
+    await rangeBatch.tryDeleteRange('range-a', 'range-b');
+    await rangeBatch.flush();
+    rangeBatch.destroy();
+    
+    // Verify values in range were deleted - use get() with string comparison
+    const valueAA = await db.get('range-aa');
+    expect(valueAA).toBe(null);
+    
+    // Range-a should be deleted (inclusive), range-b should still exist (exclusive)
+    const valueA = await db.get('range-a');
+    expect(valueA).toBe(null);
+    
+    const valueB = await db.get('range-b');
+    expect(valueB.toString()).toBe('end-value');
+    
+    await db.close();
+  });
+
+  // Test 44: Test tryPut method
+  it('tryPut', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+
+    const batch = await db.write();
+    
+    // Use the tryPut method directly
+    await batch.tryPut('tryput-key', 'tryput-value');
+    await batch.flush();
+    batch.destroy();
+    
+    // Verify the value was written
+    const value = await db.get('tryput-key');
+    expect(value).toEqual(bufferFrom('tryput-value'));
+    
+    await db.close();
+  });
+
+  // Test 45: Test tryDelete method
+  it('tryDelete', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+
+    // First put a value
+    const putBatch = await db.write();
+    await putBatch.put('trydelete-key', 'trydelete-value');
+    await putBatch.flush();
+    putBatch.destroy();
+    
+    // Verify the value exists
+    const valueBefore = await db.get('trydelete-key');
+    expect(valueBefore).toEqual(bufferFrom('trydelete-value'));
+    
+    // Use tryDelete to remove it
+    const deleteBatch = await db.write();
+    await deleteBatch.tryDelete('trydelete-key');
+    await deleteBatch.flush();
+    deleteBatch.destroy();
+    
+    // Verify the value was deleted
+    const valueAfter = await db.get('trydelete-key');
+    expect(valueAfter).toBe(null);
+    
+    await db.close();
+  });
+
+  // Test 46: Test try methods with View-like usage
+  it('try methods with View-like usage', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    
+    // Create initial data
+    await db.put('view-key-existing', 'existing-value');
+    await db.put('view-range-a', 'range-a-value');
+    await db.put('view-range-b', 'range-b-value');
+    await db.put('view-range-c', 'range-c-value');
+    
+    // Simulate View.flush with a batch of operations
+    const w = await db.write({ autoDestroy: true });
+    
+    // This is how View.flush processes changes
+    const changes = [
+      // [start, value, end]
+      ['view-key1', 'view-value1', null],          // tryPut
+      ['view-key-existing', null, null],           // tryDelete
+      ['view-range-', null, 'view-rangf']          // tryDeleteRange - prefix-based range delete
+    ];
+    
+    for (const [start, value, end] of changes) {
+      if (end !== null) {
+        await w.tryDeleteRange(start, end);
+      } else if (value !== null) {
+        await w.tryPut(start, value);
+      } else {
+        await w.tryDelete(start);
+      }
+    }
+    
+    await w.flush();
+    
+    // Verify the changes were applied
+    const key1Value = await db.get('view-key1');
+    expect(key1Value?.toString()).toBe('view-value1');
+    
+    expect(await db.get('view-key-existing')).toBe(null);
+    expect(await db.get('view-range-a')).toBe(null);
+    expect(await db.get('view-range-b')).toBe(null);
+    expect(await db.get('view-range-c')).toBe(null);
+    
+    await db.close();
+  });
+
+  // Test 47: Test the direct tryDeleteRange method
+  it('direct tryDeleteRange method', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+    
+    // Insert values
+    await db.put('direct-range-a', 'direct-start-value');
+    await db.put('direct-range-aa', 'direct-value-aa');
+    await db.put('direct-range-ab', 'direct-value-ab');
+    await db.put('direct-range-b', 'direct-end-value');
+    
+    // Use tryDeleteRange directly on the db instance
+    await db.tryDeleteRange('direct-range-a', 'direct-range-b');
+    
+    // Verify values in range were deleted - use get() with string comparison
+    const valueAA = await db.get('direct-range-aa');
+    expect(valueAA).toBe(null);
+    
+    // Range-a should be deleted (inclusive), range-b should still exist (exclusive)
+    const valueA = await db.get('direct-range-a');
+    expect(valueA).toBe(null);
+    
+    const valueB = await db.get('direct-range-b');
+    expect(valueB.toString()).toBe('direct-end-value');
+    
+    await db.close();
+  });
+
+  // Test 48: Hypercore View.flush simulation
+  it('hypercore View.flush simulation', async () => {
+    const db = new IndexDBStorage(testPath);
+    await db.ready();
+
+    // Simulate how hypercore-storage's View.flush works
+    const simulateViewFlush = async (changes, db) => {
+      const w = await db.write({ autoDestroy: true });
+      
+      for (const [start, value, end] of changes) {
+        if (end !== null) {
+          await w.tryDeleteRange(start, end);
+        } else if (value !== null) {
+          await w.tryPut(start, value);
+        } else {
+          await w.tryDelete(start);
+        }
+      }
+      
+      await w.flush();
+      return true;
+    };
+    
+    // Setup initial data
+    await db.put('view-sim-existing', 'original-value');
+    
+    // Create a batch of changes like View would
+    const changes = [
+      ['view-sim-key1', 'view-sim-value1', null],     // tryPut - using strings instead of buffers for test
+      ['view-sim-existing', null, null],              // tryDelete
+      ['view-sim-range-a', null, 'view-sim-range-z']  // tryDeleteRange
+    ];
+    
+    // Add data in the range
+    await db.put('view-sim-range-b', 'range-value-b');
+    await db.put('view-sim-range-c', 'range-value-c');
+    
+    // Apply the changes through our View.flush simulation
+    await simulateViewFlush(changes, db);
+    
+    // Verify results - using string comparison instead of buffer
+    const key1Value = await db.get('view-sim-key1');
+    expect(key1Value?.toString()).toBe('view-sim-value1');
+    
+    const existingValue = await db.get('view-sim-existing');
+    expect(existingValue).toBe(null);
+    
+    const rangeBValue = await db.get('view-sim-range-b');
+    expect(rangeBValue).toBe(null);
+    
+    const rangeCValue = await db.get('view-sim-range-c');
+    expect(rangeCValue).toBe(null);
     
     await db.close();
   });
