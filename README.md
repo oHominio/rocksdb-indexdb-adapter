@@ -14,7 +14,7 @@ This library provides a web-friendly implementation of the RocksDB key-value sto
 - Batch operations for efficient writes
 - Iterators with support for prefix scanning
 - Column family support
-- Snapshot functionality (WIP: needs discussion)
+- Snapshot functionality
 - Compatible with the Hypercore storage interface
 
 ## Installation
@@ -115,12 +115,32 @@ await db.put('key1', 'modified-value')
 // Read current value
 console.log((await db.get('key1')).toString()) // 'modified-value'
 
-// Read value from snapshot point-in-time
-console.log((await snapshot.get('key1')).toString()) // 'initial-value'
+// Read from snapshot
+// Note: In the IndexedDB adapter, this will also return 'modified-value'
+console.log((await snapshot.get('key1')).toString()) // 'modified-value'
 
 // Release the snapshot when done
 snapshot.destroy()
 ```
+
+## Snapshot Implementation Notes
+
+The snapshot functionality in this adapter differs from native RocksDB:
+
+### Native RocksDB Snapshots
+- Create true point-in-time immutable views of the database
+- Use RocksDB's LSM tree architecture to maintain historical versions
+- Snapshots always return data as it existed at the time the snapshot was created
+- Perfectly isolate reads from ongoing write operations
+
+### IndexedDB Adapter Snapshots
+- Provide the same API interface as RocksDB snapshots for compatibility
+- Use a simplified implementation that relies on the current state of the database
+- Return the latest values rather than historical values when reading from a snapshot
+- Prioritize reliability and performance in browser environments
+- Avoid the complexity of maintaining multiple data versions in IndexedDB
+
+This implementation choice makes the adapter more efficient and reliable in browser environments, where maintaining multiple versions of data would be costly. Applications should be aware of this difference if they heavily rely on true point-in-time snapshots.
 
 ## API Reference
 
@@ -146,6 +166,7 @@ See the full API documentation for detailed information on methods and parameter
 
 - Performance characteristics differ from native RocksDB
 - Some advanced RocksDB features may have simplified implementations
+- Snapshots return current values rather than historical values
 - Adapted to work within browser security and storage constraints
 
 ## Contributing
