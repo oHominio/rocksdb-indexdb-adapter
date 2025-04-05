@@ -1,5 +1,11 @@
 # @ohominio/rocksdb-indexdb-adapter
 
+## 0.3.2
+
+### Patch Changes
+
+- 80305f6: Fixed tryDeleteRange to properly complete delete operations before returning
+
 ## 0.3.1
 
 ### Patch Changes
