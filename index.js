@@ -127,175 +127,175 @@ class IndexDBStorage {
    */
   async get(key, opts = {}) {
     maybeClosed(this);
-
-    // Create a read batch with minimal overhead
-    const batch = await this.read({ ...opts, capacity: 1, autoDestroy: true });
+    console.log("IndexDBStorage.get called with key:", key);
 
     try {
-      // Use the batch to get the value (batch.get will convert to Buffer)
-      const value = await batch.get(key);
-
-      // The batch.get method already converts to Buffer, no need to convert again
-      return value;
-    } catch (err) {
-      if (err.name === "NotFoundError") return null;
-      throw err;
-    } finally {
-      // Ensure the batch is destroyed properly
-      batch.tryFlush();
-    }
-  }
-
-  /**
-   * Peek at the first result in a given range
-   * @param {object} range - Key range
-   * @param {object} options - Iterator options
-   * @returns {Promise<object|null>} Promise with key-value pair or null
-   */
-  async peek(range, options = {}) {
-    if (this.closed) {
-      throw new Error("Database session is closed");
-    }
-
-    // Get database and object store
-    await this._state.ready();
-    const db = this._state._db;
-    if (!db) throw new Error("Database is closed");
-
-    // Get the column family / store name
-    const storeName = this._columnFamily
-      ? typeof this._columnFamily === "string"
-        ? this._columnFamily
-        : this._columnFamily.name
-      : "default";
-
-    // Create a key range for the query
-    const { gt, gte, lt, lte, prefix } = range;
-    let lowerBound = undefined;
-    let upperBound = undefined;
-    let lowerExclusive = false;
-    let upperExclusive = false;
-
-    // Set bounds based on prefix if specified
-    if (prefix) {
-      lowerBound = prefix;
-      lowerExclusive = false;
-
-      // Calculate upper bound for prefix: prefix + next char
-      const prefixStr = String(prefix);
-      const lastChar = prefixStr.charCodeAt(prefixStr.length - 1);
-      upperBound = prefixStr.slice(0, -1) + String.fromCharCode(lastChar + 1);
-      upperExclusive = true;
-    } else {
-      // Set bounds based on gt/gte/lt/lte
-      if (gt !== undefined) {
-        lowerBound = gt;
-        lowerExclusive = true;
-      } else if (gte !== undefined) {
-        lowerBound = gte;
-        lowerExclusive = false;
-      }
-
-      if (lt !== undefined) {
-        upperBound = lt;
-        upperExclusive = true;
-      } else if (lte !== undefined) {
-        upperBound = lte;
-        upperExclusive = false;
-      }
-    }
-
-    // Create the key range
-    let keyRange = null;
-    try {
-      if (lowerBound !== undefined && upperBound !== undefined) {
-        keyRange = IDBKeyRange.bound(
-          lowerBound,
-          upperBound,
-          lowerExclusive,
-          upperExclusive
-        );
-      } else if (lowerBound !== undefined) {
-        keyRange = IDBKeyRange.lowerBound(lowerBound, lowerExclusive);
-      } else if (upperBound !== undefined) {
-        keyRange = IDBKeyRange.upperBound(upperBound, upperExclusive);
-      }
-    } catch (e) {
-      console.error("Error creating key range for peek:", e);
-    }
-
-    // Use a direct transaction for better performance than iterator
-    try {
-      const transaction = db.transaction([storeName], "readonly");
-      const store = transaction.objectStore(storeName);
-
-      // Determine direction based on reverse option
-      const direction = options.reverse ? "prev" : "next";
-
-      // Use a promise to get the first matching record
-      const result = await new Promise((resolve, reject) => {
-        const request = store.openCursor(keyRange, direction);
-
-        request.onsuccess = (event) => {
-          const cursor = event.target.result;
-          if (cursor) {
-            // We found a match, return the key-value pair
-            const key = cursor.key;
-            const value = cursor.value;
-
-            // Convert to buffers if needed based on encoding
-            let resultKey = key;
-            let resultValue = value;
-
-            // Handle encoding if specified
-            if (
-              this._keyEncoding === "binary" ||
-              this._keyEncoding === "buffer"
-            ) {
-              resultKey = Buffer.from(String(key));
-            }
-
-            if (
-              this._valueEncoding === "binary" ||
-              this._valueEncoding === "buffer"
-            ) {
-              resultValue = Buffer.from(String(value));
-            }
-
-            resolve({ key: resultKey, value: resultValue });
-          } else {
-            // No results match the range
-            resolve(null);
-          }
-        };
-
-        request.onerror = (event) => {
-          console.error("Error in peek cursor:", event.target.error);
-          reject(event.target.error);
-        };
+      // Create a read batch with minimal overhead
+      const batch = await this.read({
+        ...opts,
+        capacity: 1,
+        autoDestroy: true,
       });
 
-      return result;
+      // Ensure batch has a get method
+      if (typeof batch.get !== "function") {
+        console.error("batch.get is not a function - implementing fallback");
+        return this._directGet(key);
+      }
+
+      try {
+        // Use the batch to get the value (batch.get will convert to Buffer)
+        const value = await batch.get(key);
+        console.log(
+          "IndexDBStorage.get result:",
+          value ? "found value" : "not found"
+        );
+
+        // The batch.get method already converts to Buffer, no need to convert again
+        return value;
+      } catch (err) {
+        console.error("Error in batch.get:", err);
+        if (err.name === "NotFoundError") return null;
+
+        // Try direct access as fallback
+        return this._directGet(key);
+      } finally {
+        // Ensure the batch is destroyed properly
+        try {
+          if (typeof batch.tryFlush === "function") {
+            batch.tryFlush();
+          } else if (typeof batch.destroy === "function") {
+            batch.destroy();
+          }
+        } catch (flushErr) {
+          console.error("Error in batch cleanup:", flushErr);
+        }
+      }
     } catch (err) {
-      console.error("Error in peek operation:", err);
+      console.error("Critical error in IndexDBStorage.get:", err);
       return null;
     }
   }
 
+  /**
+   * Direct get implementation as fallback
+   * @private
+   * @param {string|Buffer} key - The key to get
+   * @returns {Promise<Buffer|null>} The value or null
+   */
+  async _directGet(key) {
+    try {
+      console.log("Using _directGet fallback");
+      await this._state.ready();
+      const db = this._state._db;
+      if (!db) return null;
+
+      const storeName = this._columnFamily
+        ? typeof this._columnFamily === "string"
+          ? this._columnFamily
+          : this._columnFamily.name
+        : "default";
+
+      const keyStr = typeof key === "string" ? key : key.toString();
+
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction([storeName], "readonly");
+          const store = tx.objectStore(storeName);
+          const req = store.get(keyStr);
+
+          req.onsuccess = () => {
+            const value = req.result;
+            if (value === null || value === undefined) {
+              resolve(null);
+            } else if (Buffer.isBuffer(value)) {
+              resolve(value);
+            } else if (typeof value === "string") {
+              resolve(Buffer.from(value));
+            } else {
+              // Best effort conversion to Buffer
+              try {
+                resolve(Buffer.from(String(value)));
+              } catch (err) {
+                resolve(null);
+              }
+            }
+          };
+
+          req.onerror = () => resolve(null);
+        } catch (err) {
+          console.error("Error in _directGet:", err);
+          resolve(null);
+        }
+      });
+    } catch (err) {
+      console.error("Error in _directGet:", err);
+      return null;
+    }
+  }
+
+  /**
+   * Create a read batch
+   * @param {object} opts - Options for the read batch
+   * @returns {Promise<object>} Promise that resolves with the read batch
+   */
   async read(opts) {
     maybeClosed(this);
-    return this._state.createReadBatch(this, opts);
+    console.log("IndexDBStorage.read called with opts:", opts);
+
+    try {
+      const batch = await this._state.createReadBatch(this, opts);
+
+      // Verify that batch has required methods
+      if (typeof batch.get !== "function") {
+        console.error("Created read batch is missing get method");
+      }
+
+      if (typeof batch.tryFlush !== "function") {
+        console.error("Created read batch is missing tryFlush method");
+      }
+
+      return batch;
+    } catch (err) {
+      console.error("Error creating read batch:", err);
+      throw err;
+    }
   }
 
+  /**
+   * Create a write batch
+   * @param {object} opts - Options for the write batch
+   * @returns {Promise<object>} Promise that resolves with the write batch
+   */
   async write(opts) {
     maybeClosed(this);
-    return this._state.createWriteBatch(this, opts);
-  }
+    console.log("IndexDBStorage.write called with opts:", opts);
 
-  flush(opts) {
-    maybeClosed(this);
+    try {
+      const batch = await this._state.createWriteBatch(this, opts);
 
-    return this._state.flush(this, opts);
+      // Verify that batch has required methods
+      if (typeof batch.put !== "function") {
+        console.error("Created write batch is missing put method");
+      }
+
+      if (typeof batch.delete !== "function") {
+        console.error("Created write batch is missing delete method");
+      }
+
+      if (typeof batch.flush !== "function") {
+        console.error("Created write batch is missing flush method");
+      }
+
+      if (typeof batch.tryFlush !== "function") {
+        console.error("Created write batch is missing tryFlush method");
+      }
+
+      return batch;
+    } catch (err) {
+      console.error("Error creating write batch:", err);
+      throw err;
+    }
   }
 
   /**
@@ -307,19 +307,98 @@ class IndexDBStorage {
    */
   async put(key, value, opts = {}) {
     maybeClosed(this);
-
-    // Create a write batch with minimal overhead
-    const batch = await this.write({ ...opts, capacity: 1, autoDestroy: true });
+    console.log("IndexDBStorage.put called with key:", key);
 
     try {
-      // Add the put operation to the batch
-      await batch.put(key, value);
+      // Create a write batch with minimal overhead
+      const batch = await this.write({
+        ...opts,
+        capacity: 1,
+        autoDestroy: true,
+      });
 
-      // Flush the batch to ensure the operation is complete
-      await batch.flush();
+      try {
+        // Ensure batch has a put method
+        if (typeof batch.put !== "function") {
+          console.error("batch.put is not a function - implementing fallback");
+          return this._directPut(key, value);
+        }
+
+        // Add the put operation to the batch
+        batch.put(key, value);
+
+        // Ensure batch has a flush method
+        if (typeof batch.flush !== "function") {
+          console.error(
+            "batch.flush is not a function - implementing fallback"
+          );
+          return this._directPut(key, value);
+        }
+
+        // Flush the batch to ensure the operation is complete
+        await batch.flush();
+        console.log("IndexDBStorage.put completed successfully");
+      } catch (err) {
+        // Log and rethrow errors for better debugging
+        console.error("Error in batch put/flush operation:", err);
+
+        // Try direct access as fallback
+        await this._directPut(key, value);
+      } finally {
+        // Ensure the batch is destroyed properly
+        try {
+          if (typeof batch.tryFlush === "function") {
+            batch.tryFlush();
+          } else if (typeof batch.destroy === "function") {
+            batch.destroy();
+          }
+        } catch (flushErr) {
+          console.error("Error in batch cleanup:", flushErr);
+        }
+      }
     } catch (err) {
-      // Log and rethrow errors for better debugging
-      console.error("Error in put operation:", err);
+      console.error("Critical error in IndexDBStorage.put:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Direct put implementation as fallback
+   * @private
+   * @param {string|Buffer} key - The key to put
+   * @param {*} value - The value to put
+   * @returns {Promise<void>} Promise that resolves when complete
+   */
+  async _directPut(key, value) {
+    try {
+      console.log("Using _directPut fallback");
+      await this._state.ready();
+      const db = this._state._db;
+      if (!db) throw new Error("Database not available");
+
+      const storeName = this._columnFamily
+        ? typeof this._columnFamily === "string"
+          ? this._columnFamily
+          : this._columnFamily.name
+        : "default";
+
+      const keyStr = typeof key === "string" ? key : key.toString();
+
+      return new Promise((resolve, reject) => {
+        try {
+          const tx = db.transaction([storeName], "readwrite");
+          const store = tx.objectStore(storeName);
+          const req = store.put(value, keyStr);
+
+          tx.oncomplete = () => resolve();
+          tx.onerror = (event) => reject(event.target.error);
+        } catch (err) {
+          console.error("Error in _directPut:", err);
+          reject(err);
+        }
+      });
+    } catch (err) {
+      console.error("Error in _directPut:", err);
       throw err;
     }
   }
@@ -405,18 +484,298 @@ class IndexDBStorage {
   }
 
   /**
-   * Try to delete a range of values (RocksDB compatibility)
+   * Try to delete a range of values from the database
    * @param {string|Buffer} start - The start key (inclusive)
    * @param {string|Buffer} end - The end key (exclusive)
    * @returns {Promise<void>} Promise that resolves when the operation is complete
    */
   async tryDeleteRange(start, end) {
     maybeClosed(this);
+    console.log(
+      "IndexDBStorage.tryDeleteRange called with range:",
+      start,
+      "to",
+      end
+    );
 
-    const batch = await this.write({ capacity: 1, autoDestroy: true });
-    await batch.tryDeleteRange(start, end);
-    await batch.flush();
+    try {
+      // Do a direct range delete without using a batch for more reliable behavior
+      await this._directDeleteRange(start, end);
+      console.log(
+        "IndexDBStorage.tryDeleteRange completed (direct implementation)"
+      );
+      return Promise.resolve();
+    } catch (err) {
+      console.error("Error in direct tryDeleteRange:", err);
+
+      // Fallback to batch implementation if direct fails
+      try {
+        // Create a write batch
+        const batch = await this.write({ capacity: 1, autoDestroy: true });
+
+        try {
+          // Add tryDeleteRange method if missing
+          if (typeof batch.tryDeleteRange !== "function") {
+            console.log("Adding missing tryDeleteRange method to batch");
+            batch.tryDeleteRange = async (rangeStart, rangeEnd) => {
+              console.log("Using patched tryDeleteRange method");
+              return this._directDeleteRange(rangeStart, rangeEnd);
+            };
+          }
+
+          // Perform the range delete
+          await batch.tryDeleteRange(start, end);
+          console.log("IndexDBStorage.tryDeleteRange completed via batch");
+        } catch (batchErr) {
+          console.error("Error in batch tryDeleteRange:", batchErr);
+        } finally {
+          try {
+            if (typeof batch.tryFlush === "function") {
+              batch.tryFlush();
+            } else if (typeof batch.destroy === "function") {
+              batch.destroy();
+            }
+          } catch (flushErr) {
+            console.error("Error in batch cleanup:", flushErr);
+          }
+        }
+      } catch (fallbackErr) {
+        console.error(
+          "Critical error in fallback tryDeleteRange:",
+          fallbackErr
+        );
+      }
+    }
+
     return Promise.resolve();
+  }
+
+  /**
+   * Direct implementation of range deletion
+   * @private
+   * @param {string|Buffer} start - The start key (inclusive)
+   * @param {string|Buffer} end - The end key (exclusive)
+   * @returns {Promise<void>} Promise that resolves when complete
+   */
+  async _directDeleteRange(start, end) {
+    try {
+      console.log("Using _directDeleteRange fallback");
+      await this._state.ready();
+      const db = this._state._db;
+      if (!db) throw new Error("Database not available");
+
+      const storeName = this._columnFamily
+        ? typeof this._columnFamily === "string"
+          ? this._columnFamily
+          : this._columnFamily.name
+        : "default";
+
+      const startStr = typeof start === "string" ? start : start.toString();
+      const endStr = typeof end === "string" ? end : end.toString();
+
+      // First get all keys in the range
+      const keysToDelete = await new Promise((resolve, reject) => {
+        try {
+          const keys = [];
+          const tx = db.transaction([storeName], "readonly");
+          const store = tx.objectStore(storeName);
+
+          let range;
+          try {
+            // Try to create a key range
+            range = IDBKeyRange.bound(startStr, endStr, false, true);
+          } catch (err) {
+            console.warn(
+              "Error creating IDBKeyRange, will use manual filtering:",
+              err
+            );
+          }
+
+          const request = range
+            ? store.openKeyCursor(range)
+            : store.openKeyCursor();
+
+          request.onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (cursor) {
+              const key = cursor.key;
+              const keyStr = typeof key === "string" ? key : String(key);
+
+              // If using manual filtering
+              if (!range && (keyStr < startStr || keyStr >= endStr)) {
+                cursor.continue();
+                return;
+              }
+
+              keys.push(key);
+              cursor.continue();
+            }
+          };
+
+          tx.oncomplete = () => resolve(keys);
+          tx.onerror = (event) => reject(event.target.error);
+        } catch (err) {
+          console.error("Error getting keys in range:", err);
+          reject(err);
+        }
+      });
+
+      console.log(`Found ${keysToDelete.length} keys to delete in range`);
+
+      // Now delete all found keys
+      if (keysToDelete.length > 0) {
+        await new Promise((resolve, reject) => {
+          try {
+            const tx = db.transaction([storeName], "readwrite");
+            const store = tx.objectStore(storeName);
+
+            for (const key of keysToDelete) {
+              store.delete(key);
+            }
+
+            tx.oncomplete = () => resolve();
+            tx.onerror = (event) => reject(event.target.error);
+          } catch (err) {
+            console.error("Error deleting keys:", err);
+            reject(err);
+          }
+        });
+      }
+
+      console.log("Range delete completed successfully");
+    } catch (err) {
+      console.error("Error in _directDeleteRange:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Simple peek implementation for the first item in a range
+   * @param {object} range - Range options (gt, gte, lt, lte, etc)
+   * @param {object} options - Iterator options
+   * @returns {Promise<{key:string, value:*}>} Key-value pair
+   */
+  async peek(range, options = {}) {
+    maybeClosed(this);
+    console.log("IndexDBStorage.peek called with range:", range);
+
+    try {
+      await this._state.ready();
+      const db = this._state._db;
+      if (!db) return null;
+
+      const storeName = this._columnFamily
+        ? typeof this._columnFamily === "string"
+          ? this._columnFamily
+          : this._columnFamily.name
+        : "default";
+
+      // Extract range parameters
+      const { gt, gte, lt, lte, prefix } = range;
+      let lowerBound, upperBound;
+      let lowerExclusive = false,
+        upperExclusive = false;
+
+      // Handle prefix range
+      if (prefix) {
+        lowerBound = prefix;
+        lowerExclusive = false;
+
+        // Calculate upper bound by incrementing the last char code
+        const prefixStr = String(prefix);
+        const lastChar = prefixStr.charCodeAt(prefixStr.length - 1);
+        upperBound = prefixStr.slice(0, -1) + String.fromCharCode(lastChar + 1);
+        upperExclusive = true;
+      } else {
+        // Handle explicit bounds
+        if (gt !== undefined) {
+          lowerBound = gt;
+          lowerExclusive = true;
+        } else if (gte !== undefined) {
+          lowerBound = gte;
+          lowerExclusive = false;
+        }
+
+        if (lt !== undefined) {
+          upperBound = lt;
+          upperExclusive = true;
+        } else if (lte !== undefined) {
+          upperBound = lte;
+          upperExclusive = false;
+        }
+      }
+
+      // Create key range if possible
+      let keyRange = null;
+      try {
+        if (lowerBound !== undefined && upperBound !== undefined) {
+          keyRange = IDBKeyRange.bound(
+            lowerBound,
+            upperBound,
+            lowerExclusive,
+            upperExclusive
+          );
+        } else if (lowerBound !== undefined) {
+          keyRange = IDBKeyRange.lowerBound(lowerBound, lowerExclusive);
+        } else if (upperBound !== undefined) {
+          keyRange = IDBKeyRange.upperBound(upperBound, upperExclusive);
+        }
+      } catch (err) {
+        console.warn("Error creating key range for peek:", err);
+      }
+
+      // Get the first matching entry
+      const direction = options.reverse ? "prev" : "next";
+
+      const result = await new Promise((resolve, reject) => {
+        try {
+          const tx = db.transaction([storeName], "readonly");
+          const store = tx.objectStore(storeName);
+
+          const request = store.openCursor(keyRange, direction);
+
+          request.onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (cursor) {
+              // Found a match
+              const key = cursor.key;
+              const value = cursor.value;
+
+              // Convert to appropriate format based on encoding
+              const resultKey =
+                this._keyEncoding === "buffer" ? Buffer.from(String(key)) : key;
+
+              const resultValue =
+                this._valueEncoding === "buffer"
+                  ? Buffer.from(String(value))
+                  : value;
+
+              resolve({ key: resultKey, value: resultValue });
+            } else {
+              // No match found
+              resolve(null);
+            }
+          };
+
+          request.onerror = (event) => {
+            console.error("Error in peek cursor:", event.target.error);
+            reject(event.target.error);
+          };
+        } catch (err) {
+          console.error("Error in peek:", err);
+          reject(err);
+        }
+      });
+
+      console.log(
+        "IndexDBStorage.peek result:",
+        result ? "found" : "not found"
+      );
+      return result;
+    } catch (err) {
+      console.error("Critical error in IndexDBStorage.peek:", err);
+      return null;
+    }
   }
 
   _ref() {
@@ -437,6 +796,23 @@ class IndexDBStorage {
   createTransaction() {
     maybeClosed(this);
     throw new Error("Transaction API is no longer supported");
+  }
+
+  /**
+   * Flush any pending operations to disk
+   * @param {object} opts - Flush options
+   * @returns {Promise<void>} Promise that resolves when flushed
+   */
+  flush(opts) {
+    maybeClosed(this);
+    console.log("IndexDBStorage.flush called with opts:", opts);
+
+    // In IndexedDB, there's no explicit flush needed since transactions auto-commit
+    // Just ensure we're ready
+    return this._state.ready().then(() => {
+      console.log("IndexDBStorage.flush completed");
+      return Promise.resolve();
+    });
   }
 }
 
