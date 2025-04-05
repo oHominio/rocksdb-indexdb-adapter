@@ -1,5 +1,11 @@
 # @ohominio/rocksdb-indexdb-adapter
 
+## 0.3.1
+
+### Patch Changes
+
+- Fix browser bundling by changing compact-encoding imports from default to named imports, improving compatibility with bundlers that process ESM/CJS modules.
+
 ## 0.3.0
 
 ### Minor Changes
