@@ -1,6 +1,6 @@
 {
   "name": "@ohominio/rocksdb-indexdb-adapter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "IndexedDB storage adapter for Hypercore with RocksDB-compatible interface",
   "type": "module",
   "exports": {
